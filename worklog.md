@@ -198,3 +198,17 @@ Stage Summary:
 - Demo data dumped in 0005: 4 users, 1 org (nimbusworks/professional), 4 memberships, 8 accounts, 12 contacts, 10 leads, 12 deals, 12 tasks, 10 activities, 5 products, 3 email templates, 3 workflows, 2 campaigns, 4 invoices, 3 notifications, 6 curated audit rows (≈14 contacts in the brief was an estimate — 12 is the pristine seed).
 - Env vars the app actually reads: DATABASE_URL, DIRECT_URL (postgres schema only), APP_URL, RESEND_API_KEY, MAIL_FROM (+NODE_ENV automatic). No WhatsApp env vars (per-workspace in DB).
 - For Task 7 / orchestrator: production must connect as `postgres` (not nova_app) until app.org_id pinning is implemented — rationale + hardening path in DEPLOYMENT.md §1 & migrations/README §3. 0005 is optional (skip = no public demo). Build Command on Vercel must be `bash scripts/vercel-build.sh`. Sandbox DB demo org restored to pristine (professional plan, 4 members, spread ownership) — safe for any demo-verification pass.
+
+---
+Task ID: 7 + 8
+Agent: main (Z.ai Code)
+Task: Full E2E re-verification of everything + final GitHub push
+
+Work Log:
+- Verified with agent-browser (2 sessions): demo sign-in → dashboard KPIs/charts + amber demo banner; Team view (invite dialog, invitations card, 11-row permission matrix); invite → demo-mode link → new session opens /?invite=token → invite banner + locked prefilled email → signup → own workspace "Verify Labs" + auto-accepted NimbusWorks membership (org switcher shows both); member role in NimbusWorks: Campaigns/Workflows/Integrations/Billing hidden from sidebar + ⌘K, Team view read-only (no invite/role/remove controls); demo reset (confirm dialog → "Demo data reset ✨" → 8 accounts/12 contacts/12 deals/10 leads/12 tasks professional plan); mobile 390px — fixed demo banner stacking (flex-col sm:flex-row); landing page + sign-out clean; zero console/page errors; dev.log clean; lint + tsc(src) clean.
+- Cleaned up all e2e test artifacts (test user, org, membership, invitation) via @prisma/client; demo workspace left pristine.
+- Pushed to GitHub (github.com/ramthe666/ZCRM, branch main): commits e171143 (sign-in fix), eb2c989 (invitation system), 3faf216 (deployment kit). Repo now contains the full product: src/, prisma/ (sqlite + postgres schemas), migrations/ (0001–0005), scripts/vercel-build.sh, .env.example, DEPLOYMENT.md, README.md. Sandbox-only files untracked.
+
+Stage Summary:
+- ALL user-reported issues resolved and browser-verified. Production deployment path ready: Supabase migrations 0001→0005 → Vercel import with build command `bash scripts/vercel-build.sh` + env vars from .env.example → Resend domain + key for real invite/welcome emails.
+- Demo account fully working in sandbox and (after 0005) in production, with self-service reset.
