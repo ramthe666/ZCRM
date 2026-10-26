@@ -10,6 +10,7 @@ project for production.**
 | `0001_init.sql`        | 23 native enum types, 18 snake_case tables (1:1 with `prisma/schema.prisma`), all `@@index`/`@@unique` indexes, `set_updated_at()` triggers, `users.auth_user_id` bridge to Supabase Auth. Fully idempotent. |
 | `0002_rls.sql`         | The centerpiece: RLS **ENABLED + FORCED** on all 18 tables, 146 role-scoped policies (tenant / own / admin / self / app / owner), 5 SECURITY DEFINER helper functions, the `nova_app` strict-mode role, grants & revokes. Idempotent (`DROP POLICY IF EXISTS` before every create). |
 | `0003_verification.sql`| Nine checks (CHECK 1–8 + 5b) as DO blocks (RAISE EXCEPTION on failure, RAISE NOTICE on success): RLS flags, enums, helpers, triggers, the **exact 146-policy inventory**, no anon policies, reserved write paths, privilege lock-outs. Plus commented attack simulations and the strict-mode walkthrough. |
+| `0004_invitations.sql`  | The `invitations` table (email invitations with a 64-hex capability token) + its 6 RLS policies (authenticated read via `is_org_member` or own email via a new `current_user_emails()` helper; nova_app token-credential SELECT + strictly org-pinned writes; owner escape hatch) + grants and its own verification DO block. Run after `0002` (+ `0003`). |
 
 ---
 

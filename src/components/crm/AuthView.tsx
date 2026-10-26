@@ -3,25 +3,36 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Loader2, Sparkles, Lock, Mail, UserRound, Building2 } from 'lucide-react'
+import { ArrowLeft, Loader2, Sparkles, Lock, Mail, MailPlus, UserRound, Building2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 
-import { api, setActiveOrgId, type SessionPayload } from '@/lib/crm'
+import { api, setActiveOrgId, roleLabel, type SessionPayload } from '@/lib/crm'
 import { LogoMark, DashboardMockup } from '@/components/crm/landing/illustrations'
+
+export interface AuthInvite {
+  email: string
+  role: string
+  orgName: string
+  inviterName: string
+}
 
 export function AuthView({
   mode,
   onModeChange,
   onSuccess,
   onBack,
+  invite,
 }: {
   mode: 'signin' | 'signup'
   onModeChange: (m: 'signin' | 'signup') => void
   onSuccess: (payload: SessionPayload & { user: NonNullable<SessionPayload['user']> }) => void
   onBack: () => void
+  /** Present when the user arrived via an invitation deep link. */
+  invite?: AuthInvite | null
 }) {
   const [name, setName] = React.useState('')
   const [company, setCompany] = React.useState('')
@@ -29,6 +40,11 @@ export function AuthView({
   const [password, setPassword] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+
+  // Deep-link invitations pin the invitee's email — prefill it once.
+  React.useEffect(() => {
+    if (invite?.email) setEmail(invite.email)
+  }, [invite?.email])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -59,6 +75,7 @@ export function AuthView({
   const setMode = (m: 'signin' | 'signup') => {
     onModeChange(m)
     setError(null)
+    if (invite?.email) setEmail(invite.email)
   }
 
   return (
@@ -97,9 +114,61 @@ export function AuthView({
             <span className="font-bold">Nova CRM</span>
           </div>
 
-          <h2 className="text-2xl font-bold tracking-tight">{mode === 'signin' ? 'Welcome back' : 'Create your workspace'}</h2>
+          {invite ? (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.35 }}
+              role="status"
+              className="mb-6 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 p-4 dark:border-emerald-500/30 dark:from-emerald-500/10 dark:to-teal-500/10"
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+                  <MailPlus className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-semibold leading-snug">
+                    You&apos;ve been invited to join {invite.orgName}
+                  </p>
+                  <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+                    as
+                    <Badge className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+                      {roleLabel(invite.role)}
+                    </Badge>
+                    <span>by {invite.inviterName}</span>
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Accept by signing in — or create your account if you&apos;re new here.{' '}
+                    <button
+                      type="button"
+                      className="font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                      onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+                    >
+                      {mode === 'signin' ? 'Create account' : 'Sign in instead'}
+                    </button>
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+
+          <h2 className="text-2xl font-bold tracking-tight">
+            {invite
+              ? mode === 'signin'
+                ? 'Sign in to accept'
+                : 'Create your account'
+              : mode === 'signin'
+                ? 'Welcome back'
+                : 'Create your workspace'}
+          </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            {mode === 'signin' ? 'Sign in to your Nova CRM workspace.' : 'Free 14-day trial · sample data included · no credit card.'}
+            {invite
+              ? mode === 'signin'
+                ? `Use ${invite.email} to accept the invitation to ${invite.orgName}.`
+                : 'Your new workspace is created first — the invitation is accepted automatically after signup.'
+              : mode === 'signin'
+                ? 'Sign in to your Nova CRM workspace.'
+                : 'Free 14-day trial · sample data included · no credit card.'}
           </p>
 
           <form onSubmit={submit} className="mt-7 space-y-4">
@@ -125,8 +194,24 @@ export function AuthView({
               <Label htmlFor="email" className="mb-1.5">Work email</Label>
               <div className="relative">
                 <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input id="email" type="email" className="pl-9" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />
+                <Input
+                  id="email"
+                  type="email"
+                  className={`pl-9 ${invite ? 'bg-muted/60 text-muted-foreground' : ''}`}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  required
+                  readOnly={!!invite}
+                  aria-readonly={!!invite}
+                  aria-describedby={invite ? 'invite-email-hint' : undefined}
+                />
               </div>
+              {invite ? (
+                <p id="invite-email-hint" className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+                  <Lock className="h-3 w-3 shrink-0" /> Locked to the invited email — it is used to accept the invitation.
+                </p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="password" className="mb-1.5">Password</Label>
@@ -148,17 +233,21 @@ export function AuthView({
             </Button>
           </form>
 
-          <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="h-px flex-1 bg-border" />
-            or
-            <span className="h-px flex-1 bg-border" />
-          </div>
+          {invite ? null : (
+            <>
+              <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                or
+                <span className="h-px flex-1 bg-border" />
+              </div>
 
-          <Button type="button" variant="outline" className="w-full" onClick={fillDemo}>
-            <Sparkles className="mr-2 h-4 w-4 text-emerald-600" />
-            Try the live demo workspace
-          </Button>
-          <p className="mt-2 text-center text-xs text-muted-foreground">demo@novacrm.io · Demo1234! · 4 team members, full sample data</p>
+              <Button type="button" variant="outline" className="h-11 w-full" onClick={fillDemo}>
+                <Sparkles className="mr-2 h-4 w-4 text-emerald-600" />
+                Try the live demo workspace
+              </Button>
+              <p className="mt-2 text-center text-xs text-muted-foreground">demo@novacrm.io · Demo1234! · 4 team members, full sample data</p>
+            </>
+          )}
 
           <p className="mt-8 text-center text-sm text-muted-foreground">
             {mode === 'signin' ? "New to Nova CRM? " : 'Already have an account? '}

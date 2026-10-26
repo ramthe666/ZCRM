@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useTheme } from 'next-themes'
 import {
   Menu, Search, Bell, Sun, Moon, LogOut, ChevronsUpDown, Building2, Check,
-  Command as CommandIcon, Clock, UserRound,
+  Command as CommandIcon, Clock, UserRound, MailPlus, FlaskConical, Sparkles, RotateCw,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -16,11 +16,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
-import { api, MODULE_GROUPS, ALL_MODULES, formatRelative, initials, type Row, type SessionUser, type MembershipInfo, type OrgInfo } from '@/lib/crm'
+import { api, MODULE_GROUPS, ALL_MODULES, moduleAllowedForRole, isDemoOrg, roleLabel, formatRelative, initials, type Row, type SessionUser, type MembershipInfo, type OrgInfo, type PendingInvitation } from '@/lib/crm'
 import { getActiveOrgId, setActiveOrgId } from '@/lib/crm'
 import { useWorkspace } from '@/lib/store'
 
 import { LogoMark } from '@/components/crm/landing/illustrations'
+import { ConfirmDialog } from './shared'
 import { DashboardView } from './views/DashboardView'
 import { EntityView } from './views/EntityView'
 import { DealsView } from './views/DealsView'
@@ -39,18 +40,41 @@ export interface WorkspaceProps {
   org: OrgInfo
   role: string
   memberships: MembershipInfo[]
+  /** Open invitations for the signed-in user's email (join banners). */
+  pendingInvitations?: PendingInvitation[]
   onUserUpdated: (u: SessionUser) => void
   onOrgUpdated: (o: OrgInfo) => void
   onSwitchOrg: (orgId: string) => void
   onSignOut: () => void
+  onAcceptInvite?: (token: string) => void
+  onDeclineInvite?: (token: string) => void
+  /** Demo banner: sign out and start a fresh signup (own workspace). */
+  onStartTrial?: () => void
 }
 
 export function Workspace(props: WorkspaceProps) {
   const { user, org, role, memberships, onSignOut } = props
   const store = useWorkspace()
+  const setModule = useWorkspace((s) => s.setModule)
   const [mobileNav, setMobileNav] = React.useState(false)
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const [seats, setSeats] = React.useState(memberships.length ? 0 : 0)
+
+  // Role-gated navigation (mirrors the server-enforced module permissions).
+  const navGroups = React.useMemo(
+    () =>
+      MODULE_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => moduleAllowedForRole(item.key, role)),
+      })).filter((group) => group.items.length > 0),
+    [role]
+  )
+
+  // Defensive: if the active module is unavailable for this role (e.g. the role
+  // just changed server-side), bounce back to the dashboard.
+  React.useEffect(() => {
+    if (!moduleAllowedForRole(store.module, role)) setModule('dashboard')
+  }, [store.module, role, setModule])
 
   // Keyboard shortcut ⌘K / Ctrl+K
   React.useEffect(() => {
@@ -68,9 +92,11 @@ export function Workspace(props: WorkspaceProps) {
     void api<{ rows: Row[] }>('/api/org/members').then((r) => setSeats(r.rows.length)).catch(() => {})
   }, [store.refreshTick])
 
-  const activeModule = ALL_MODULES.find((m) => m.key === store.module) ?? ALL_MODULES[0]
-
   const renderModule = () => {
+    // Role gate: never render a module the current role can't access.
+    if (!moduleAllowedForRole(store.module, role)) {
+      return <DashboardView userName={user.name} />
+    }
     switch (store.module) {
       case 'dashboard':
         return <DashboardView userName={user.name} />
@@ -121,7 +147,7 @@ export function Workspace(props: WorkspaceProps) {
       </div>
 
       <ScrollArea className="min-h-0 flex-1 px-2 pb-4">
-        {MODULE_GROUPS.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.label} className="mb-3">
             <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group.label}</p>
             {group.items.map((item) => {
@@ -205,6 +231,14 @@ export function Workspace(props: WorkspaceProps) {
         </header>
 
         <main className="min-w-0 flex-1 p-4 sm:p-6">
+          {/* Pending invitations — newest first, stacked (max 3) */}
+          {props.pendingInvitations && props.pendingInvitations.length > 0 && props.onAcceptInvite && props.onDeclineInvite ? (
+            <InviteBanner invitations={props.pendingInvitations} onAccept={props.onAcceptInvite} onDecline={props.onDeclineInvite} />
+          ) : null}
+
+          {/* Shared demo workspace notice */}
+          {isDemoOrg(org) && props.onStartTrial ? <DemoBanner role={role} onStartTrial={props.onStartTrial} /> : null}
+
           <AnimatePresence mode="wait">
             <motion.div key={store.module} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
               {renderModule()}
@@ -217,8 +251,126 @@ export function Workspace(props: WorkspaceProps) {
         </footer>
       </div>
 
-      <SearchPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <SearchPalette open={paletteOpen} onOpenChange={setPaletteOpen} role={role} />
     </div>
+  )
+}
+
+// ─────────────────────────── Pending invitation banner ───────────────────────────
+
+function InviteBanner({
+  invitations,
+  onAccept,
+  onDecline,
+}: {
+  invitations: PendingInvitation[]
+  onAccept: (token: string) => void
+  onDecline: (token: string) => void
+}) {
+  const visible = invitations.slice(0, 3)
+  const extra = invitations.length - visible.length
+  return (
+    <div className="mb-4 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+      <AnimatePresence initial={false}>
+        {visible.map((inv) => (
+          <motion.div
+            key={inv.token}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-wrap items-center gap-2.5 px-4 py-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+                <MailPlus className="h-5 w-5" />
+              </span>
+              <p className="min-w-0 flex-1 text-sm text-emerald-900 dark:text-emerald-100">
+                <span className="font-semibold">{inv.inviterName}</span> invited you to join{' '}
+                <span className="font-semibold">{inv.orgName}</span> as {roleLabel(inv.role)}
+              </p>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  className="h-11 bg-emerald-600 px-4 text-white hover:bg-emerald-700"
+                  onClick={() => onAccept(inv.token)}
+                >
+                  <Check className="mr-1.5 h-4 w-4" /> Accept
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-11 px-4 text-emerald-800 hover:bg-emerald-600/10 hover:text-emerald-900 dark:text-emerald-200 dark:hover:text-emerald-100"
+                  onClick={() => onDecline(inv.token)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+      {extra > 0 ? (
+        <p className="border-t border-emerald-200/70 px-4 py-1.5 text-xs text-emerald-800/80 dark:border-emerald-500/20 dark:text-emerald-200/70">
+          +{extra} more invitation{extra === 1 ? '' : 's'} waiting
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+// ─────────────────────────── Demo workspace banner ───────────────────────────
+
+function DemoBanner({ role, onStartTrial }: { role: string; onStartTrial: () => void }) {
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
+  const bump = useWorkspace((s) => s.bump)
+  const isAdmin = role === 'admin' || role === 'owner'
+
+  const resetDemo = async () => {
+    await api('/api/demo/reset', { method: 'POST' })
+    toast.success('Demo data reset ✨')
+    bump()
+  }
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="mb-4 flex flex-wrap items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 dark:border-amber-500/25 dark:bg-amber-500/10"
+        role="note"
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400">
+          <FlaskConical className="h-5 w-5" />
+        </span>
+        <p className="min-w-0 flex-1 text-sm text-amber-900 dark:text-amber-100">
+          You&apos;re exploring the shared demo workspace — sample data, visible to everyone, resets periodically.
+        </p>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button className="h-11 bg-amber-600 px-4 text-white hover:bg-amber-700" onClick={onStartTrial}>
+            <Sparkles className="mr-1.5 h-4 w-4" /> Create your own workspace
+          </Button>
+          {isAdmin ? (
+            <Button
+              variant="ghost"
+              className="h-11 px-4 text-amber-800 hover:bg-amber-600/10 hover:text-amber-900 dark:text-amber-200 dark:hover:text-amber-100"
+              onClick={() => setConfirmOpen(true)}
+            >
+              <RotateCw className="mr-1.5 h-4 w-4" /> Reset demo data
+            </Button>
+          ) : null}
+        </div>
+      </motion.div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={resetDemo}
+        title="Reset demo data?"
+        description="All exploratory changes in the shared demo workspace are replaced with the original sample dataset. This affects everyone currently using the demo."
+        confirmLabel="Reset demo data"
+        destructive={false}
+      />
+    </>
   )
 }
 
@@ -365,11 +517,13 @@ interface SearchGroup {
   items: { id: string; title: string; subtitle: string; entity: string }[]
 }
 
-function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function SearchPalette({ open, onOpenChange, role }: { open: boolean; onOpenChange: (o: boolean) => void; role: string }) {
   const [q, setQ] = React.useState('')
   const [groups, setGroups] = React.useState<SearchGroup[]>([])
   const [searching, setSearching] = React.useState(false)
   const store = useWorkspace()
+
+  const quickNav = React.useMemo(() => ALL_MODULES.filter((m) => moduleAllowedForRole(m.key, role)), [role])
 
   React.useEffect(() => {
     if (!open) {
@@ -405,7 +559,7 @@ function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 
         {q.trim().length < 2 ? (
           <CommandGroup heading="Quick navigation">
-            {ALL_MODULES.map((m) => (
+            {quickNav.map((m) => (
               <CommandItem
                 key={m.key}
                 value={`go ${m.label}`}

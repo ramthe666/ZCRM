@@ -5,8 +5,9 @@ import { audit, notify } from '@/lib/events'
 import { PLANS } from '@/lib/limits'
 
 // POST /api/billing/subscribe { plan, cycle } — mock checkout that updates the
-// workspace plan and issues an invoice. In production this is where a Stripe
-// Checkout session would be created and the webhook would confirm.
+// workspace plan and issues an invoice. Admin+ (owner transfers/cancellation
+// stay owner-only). In production this is where a Stripe Checkout session
+// would be created and the webhook would confirm.
 const schema = z.object({
   plan: z.enum(['starter', 'standard', 'professional', 'enterprise']),
   cycle: z.enum(['monthly', 'yearly']).default('monthly'),
@@ -14,7 +15,7 @@ const schema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAuth(req, 'owner')
+    const auth = await requireAuth(req, 'admin')
     const parsed = schema.safeParse(await req.json().catch(() => ({})))
     if (!parsed.success) throw new ApiError(400, 'Invalid plan selection')
     const { plan, cycle } = parsed.data

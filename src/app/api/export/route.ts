@@ -3,6 +3,7 @@ import { ApiError, errorResponse, requireAuth } from '@/lib/auth'
 import { ENTITIES } from '@/lib/entities'
 
 // GET /api/export?entity=contacts → CSV download (cookie-authenticated link).
+// Manager+ only (bulk data exfiltration is not for every seat).
 const EXPORTABLE = ['contacts', 'leads', 'accounts', 'deals', 'tasks', 'products', 'activities']
 
 function csvEscape(value: unknown): string {
@@ -31,7 +32,7 @@ const COLUMN_LABELS: Record<string, string> = {
 
 export async function GET(req: Request) {
   try {
-    const auth = await requireAuth(req)
+    const auth = await requireAuth(req, 'manager')
     const entity = new URL(req.url).searchParams.get('entity') ?? ''
     if (!EXPORTABLE.includes(entity)) throw new ApiError(400, 'Unsupported export entity')
 

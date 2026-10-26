@@ -17,7 +17,28 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'asc' },
     })
 
-    return json({ user: auth.user, memberships, activeOrgId: auth.org.id })
+    // Pending invitations addressed to this user's email for orgs they have
+    // NOT joined yet (drives the "You've been invited" banner after sign-in).
+    const pendingRows = await db.invitation.findMany({
+      where: {
+        email: auth.user.email.toLowerCase(),
+        status: 'pending',
+        expiresAt: { gt: new Date() },
+        org: { memberships: { none: { userId: auth.user.id, status: 'active' } } },
+      },
+      include: { org: { select: { name: true } }, invitedBy: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    })
+    const pendingInvitations = pendingRows.map((i) => ({
+      token: i.token,
+      orgName: i.org.name,
+      role: i.role,
+      inviterName: i.invitedBy?.name ?? null,
+      expiresAt: i.expiresAt,
+    }))
+
+    return json({ user: auth.user, memberships, activeOrgId: auth.org.id, pendingInvitations })
   } catch (e) {
     return errorResponse(e)
   }

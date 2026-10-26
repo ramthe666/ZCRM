@@ -30,13 +30,42 @@ export interface MembershipInfo {
   org: OrgInfo
 }
 
+/** Pending org invitation surfaced on the session (join banner in the workspace). */
+export interface PendingInvitation {
+  token: string
+  orgName: string
+  role: string
+  inviterName: string
+  expiresAt: string
+}
+
+/** Resolved from a `?invite=<token>` deep link before any auth decision is made. */
+export interface InviteContext {
+  token: string
+  email: string
+  role: string
+  orgName: string
+  inviterName: string
+}
+
 export interface SessionPayload {
   user: SessionUser | null
   memberships?: MembershipInfo[]
   activeOrgId?: string
+  pendingInvitations?: PendingInvitation[]
 }
 
 export type Row = Record<string, unknown>
+
+/** Error thrown by the api() client — carries the HTTP status for flow control. */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
 
 // ─────────────────────────── API client ───────────────────────────
 
@@ -66,7 +95,7 @@ export async function api<T = Row>(
     credentials: 'same-origin',
   })
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
-  if (!res.ok) throw new Error((data.error as string) ?? `Request failed (${res.status})`)
+  if (!res.ok) throw new ApiError((data.error as string) ?? `Request failed (${res.status})`, res.status)
   return data as T
 }
 
@@ -396,3 +425,38 @@ export const MODULE_GROUPS: { label: string; items: ModuleDef[] }[] = [
 ]
 
 export const ALL_MODULES: ModuleDef[] = MODULE_GROUPS.flatMap((g) => g.items)
+
+// ─────────────────────────── Role-based module gating ───────────────────────────
+// Mirrors the server-enforced role matrix: modules below require at least the
+// given role. Everything else (dashboard, records, calendar, reports, team,
+// settings…) is available to every role.
+export const MODULE_MIN_ROLE: Record<string, 'manager' | 'admin'> = {
+  campaigns: 'manager',
+  workflows: 'manager',
+  integrations: 'admin',
+  billing: 'admin',
+}
+
+const ROLE_RANK: Record<string, number> = { member: 1, manager: 2, admin: 3, owner: 4 }
+
+export function moduleAllowedForRole(moduleKey: string, role: string): boolean {
+  const min = MODULE_MIN_ROLE[moduleKey]
+  if (!min) return true
+  return (ROLE_RANK[role] ?? 1) >= ROLE_RANK[min]
+}
+
+// ─────────────────────────── Invitations ───────────────────────────
+
+export const INVITE_STATUS_TONE: Record<string, string> = {
+  pending: 'amber',
+  accepted: 'emerald',
+  revoked: 'slate',
+  expired: 'rose',
+}
+
+/** Slugs of the shared demo workspace (shown with the amber demo banner). */
+export const DEMO_ORG_SLUGS = ['nimbus-works', 'nimbusworks']
+
+export function isDemoOrg(org: { slug?: string | null } | null | undefined): boolean {
+  return !!org?.slug && DEMO_ORG_SLUGS.includes(org.slug)
+}

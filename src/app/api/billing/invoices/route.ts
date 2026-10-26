@@ -2,10 +2,10 @@ import { db } from '@/lib/db'
 import { errorResponse, json, requireAuth } from '@/lib/auth'
 import { PLANS } from '@/lib/limits'
 
-// GET → invoices + current plan usage vs limits
+// GET → invoices + current plan usage vs limits (admin+)
 export async function GET(req: Request) {
   try {
-    const auth = await requireAuth(req)
+    const auth = await requireAuth(req, 'admin')
 
     const [invoices, seats, contacts, workflows, campaigns] = await Promise.all([
       db.invoice.findMany({ where: { orgId: auth.org.id }, orderBy: { date: 'desc' } }),

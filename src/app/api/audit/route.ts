@@ -1,10 +1,10 @@
 import { db } from '@/lib/db'
 import { errorResponse, json, requireAuth } from '@/lib/auth'
 
-// Org audit trail (admin+ visible)
+// Org audit trail (admin+ only)
 export async function GET(req: Request) {
   try {
-    const auth = await requireAuth(req, 'manager')
+    const auth = await requireAuth(req, 'admin')
     const url = new URL(req.url)
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1) || 1)
     const pageSize = 30

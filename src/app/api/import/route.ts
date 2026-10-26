@@ -6,10 +6,10 @@ import { PLANS } from '@/lib/limits'
 
 // POST /api/import { entity: 'contacts'|'leads', rows: [...] }
 // Rows are plain objects from client-side CSV parsing. Per-row validation,
-// returns a per-row error report. Max 500 rows per call.
+// returns a per-row error report. Max 500 rows per call. Manager+ only.
 export async function POST(req: Request) {
   try {
-    const auth = await requireAuth(req)
+    const auth = await requireAuth(req, 'manager')
     const body = (await req.json().catch(() => ({}))) as { entity?: string; rows?: Record<string, unknown>[] }
     const entity = body.entity ?? ''
     if (entity !== 'contacts' && entity !== 'leads') throw new ApiError(400, 'Import supports contacts and leads')

@@ -181,6 +181,7 @@ export const ENTITIES: Record<string, EntitySpec> = {
     include: { user: personInclude },
     minRoleWrite: 'member',
     minRoleDelete: 'manager',
+    ownerField: 'userId',
   },
   products: {
     model: 'product',
@@ -233,7 +234,7 @@ export const ENTITIES: Record<string, EntitySpec> = {
     sortFields: ['createdAt', 'runCount', 'name'],
     defaultSort: { field: 'createdAt', dir: 'desc' },
     minRoleWrite: 'manager',
-    minRoleDelete: 'admin',
+    minRoleDelete: 'manager',
   },
   campaigns: {
     model: 'campaign',

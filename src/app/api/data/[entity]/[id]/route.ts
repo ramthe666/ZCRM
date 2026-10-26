@@ -1,4 +1,4 @@
-import { ApiError, errorResponse, json, requireAuth } from '@/lib/auth'
+import { ApiError, errorResponse, json, requireAuth, ROLE_LEVEL } from '@/lib/auth'
 import { applyDealRules, buildData, getEntity, modelDelegate } from '@/lib/entities'
 import { audit } from '@/lib/events'
 import { runWorkflows } from '@/lib/workflow'
@@ -64,11 +64,26 @@ export async function DELETE(req: Request, ctx: Ctx) {
   try {
     const { entity, id } = await ctx.params
     const spec = getEntity(entity)
-    const auth = await requireAuth(req, spec.minRoleDelete)
+    // Any signed-in role may attempt a delete; the ownership rules below decide.
+    const auth = await requireAuth(req)
     const delegate = modelDelegate(spec)
 
     const existing = (await delegate.findUnique({ where: { id } })) as Record<string, unknown> | null
     if (!existing || existing.orgId !== auth.org.id) throw new ApiError(404, `${spec.label} not found`)
+
+    // Role matrix: manager+ may delete any record. A member may delete ONLY
+    // records assigned to them (ownerId for leads/contacts/accounts/deals,
+    // assigneeId for tasks, userId for activities). Products, templates,
+    // workflows and campaigns have no owner — members can never delete those.
+    const level = ROLE_LEVEL[auth.membership.role] ?? 0
+    if (level < ROLE_LEVEL.manager) {
+      const ownerId = spec.ownerField ? existing[spec.ownerField] : null
+      if (ownerId !== auth.user.id) {
+        throw new ApiError(403, 'Members can only delete records assigned to them')
+      }
+    } else if (level < (ROLE_LEVEL[spec.minRoleDelete] ?? 1)) {
+      throw new ApiError(403, `This action requires the ${spec.minRoleDelete} role or higher`)
+    }
 
     await delegate.delete({ where: { id } })
     await audit(auth.org.id, auth.user.id, 'delete', entity, id, `Deleted ${spec.label} "${title(entity, existing)}"`)

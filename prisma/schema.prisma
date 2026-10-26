@@ -33,6 +33,7 @@ model User {
   activities    Activity[]
   notifications Notification[]
   auditLogs     AuditLog[]
+  sentInvitations Invitation[] @relation("InvitationInviter")
 }
 
 model Session {
@@ -70,6 +71,7 @@ model Organization {
   products       Product[]
   notifications  Notification[]
   integrations   Integration[]
+  invitations    Invitation[]
   workflows      Workflow[]
   emailTemplates EmailTemplate[]
   campaigns      Campaign[]
@@ -92,6 +94,26 @@ model Membership {
 
   @@unique([userId, orgId])
   @@index([orgId])
+}
+
+// Email invitations — created by admins, delivered via Resend, accepted by the
+// invited email address (whether or not they already have a Nova CRM account).
+model Invitation {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  email       String
+  role        String       @default("member") // admin | manager | member
+  token       String       @unique
+  status      String       @default("pending") // pending | accepted | revoked
+  invitedById String?
+  invitedBy   User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([orgId])
+  @@index([email, status])
 }
 
 // ─────────────────────────── Core CRM ───────────────────────────

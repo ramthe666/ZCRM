@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ApiError, createSession, errorResponse, hashPassword, json, rateLimit } from '@/lib/auth'
 import { seedOrgData } from '@/lib/seed'
-import { audit } from '@/lib/events'
+import { audit, notify } from '@/lib/events'
+import { sendMail, welcomeEmail } from '@/lib/mailer'
 
 const schema = z.object({
   name: z.string().min(2, 'Name is too short').max(80),
@@ -65,13 +66,46 @@ export async function POST(req: Request) {
     // Starter sample data so the workspace feels alive immediately
     await seedOrgData(org.id, user.id, false).catch((e) => console.error('[seed]', e))
 
+    // Auto-accept any pending, non-expired invitations addressed to this email:
+    // create the memberships, close the invitations and notify each inviter.
+    const acceptedInvites = await db.invitation.findMany({
+      where: { email: normalizedEmail, status: 'pending', expiresAt: { gt: new Date() } },
+      include: { org: true, invitedBy: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    })
+    const inviteMemberships: { role: string; status: string; org: typeof org }[] = []
+    for (const invite of acceptedInvites) {
+      if (invite.orgId === org.id) continue // paranoia: never self-invite into the fresh org
+      const membership = await db.membership.create({
+        data: { userId: user.id, orgId: invite.orgId, role: invite.role, status: 'active' },
+      })
+      await db.invitation.update({ where: { id: invite.id }, data: { status: 'accepted' } })
+      if (invite.invitedBy) {
+        await notify(
+          invite.invitedBy.id,
+          invite.orgId,
+          `${user.name} accepted your invitation`,
+          `They joined ${invite.org.name} as ${invite.role}.`,
+          'team'
+        )
+      }
+      await audit(invite.orgId, user.id, 'invite', 'membership', membership.id, `${user.name} accepted an invitation and joined ${invite.org.name} as ${invite.role}`)
+      inviteMemberships.push({ role: invite.role, status: 'active', org: invite.org })
+    }
+
     await audit(org.id, user.id, 'signup', 'organization', org.id, `${user.name} created workspace "${org.name}"`)
     await createSession(user.id, req)
+
+    // Welcome email — async best-effort, must never fail signup.
+    const welcome = welcomeEmail({ name: user.name, orgName: org.name })
+    sendMail({ to: normalizedEmail, subject: welcome.subject, html: welcome.html, text: welcome.text }).catch((e) =>
+      console.error('[mailer] welcome email failed:', e instanceof Error ? e.message : e)
+    )
 
     return json(
       {
         user: { id: user.id, email: user.email, name: user.name, title: user.title, avatarColor: user.avatarColor },
-        memberships: [{ role: 'owner', status: 'active', org }],
+        memberships: [{ role: 'owner', status: 'active', org }, ...inviteMemberships],
         activeOrgId: org.id,
       },
       201
