@@ -1,0 +1,419 @@
+// Nova CRM — Production schema (Supabase Postgres)
+//
+// Production schema (Supabase Postgres). The sandbox uses schema.prisma (SQLite);
+// scripts/vercel-build.sh picks this file when DATABASE_URL is a Postgres URL.
+// Never `prisma db push` against production — migrations in ../migrations are
+// the source of truth.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"] // native (local/bunx) + Vercel's Amazon Linux runtime
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Supabase transaction pooler (port 6543, pgbouncer=true)
+  directUrl = env("DIRECT_URL")   // direct connection (port 5432) — migrations/introspection
+}
+
+// ─────────────────────────── Identity ───────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  title        String?
+  phone        String?
+  avatarColor  String   @default("#059669")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships   Membership[]
+  sessions      Session[]
+  ownedLeads    Lead[]       @relation("LeadOwner")
+  ownedContacts Contact[]    @relation("ContactOwner")
+  ownedAccounts Account[]    @relation("AccountOwner")
+  ownedDeals    Deal[]       @relation("DealOwner")
+  assignedTasks Task[]       @relation("TaskAssignee")
+  activities    Activity[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  sentInvitations Invitation[] @relation("InvitationInviter")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  userAgent String?
+
+  @@index([userId])
+}
+
+model Organization {
+  id           String    @id @default(cuid())
+  name         String
+  slug         String    @unique
+  plan         String    @default("starter") // starter | standard | professional | enterprise
+  billingCycle String    @default("monthly") // monthly | yearly
+  planStatus   String    @default("trialing") // trialing | active | past_due | canceled
+  trialEndsAt  DateTime?
+  billingEmail String?
+  currency     String    @default("USD")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  memberships    Membership[]
+  leads          Lead[]
+  contacts       Contact[]
+  accounts       Account[]
+  deals          Deal[]
+  tasks          Task[]
+  activities     Activity[]
+  products       Product[]
+  notifications  Notification[]
+  integrations   Integration[]
+  invitations    Invitation[]
+  workflows      Workflow[]
+  emailTemplates EmailTemplate[]
+  campaigns      Campaign[]
+  invoices       Invoice[]
+  auditLogs      AuditLog[]
+
+  @@index([slug])
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  orgId     String
+  role      String   @default("member") // owner | admin | manager | member
+  status    String   @default("active") // active | invited
+  createdAt DateTime @default(now())
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+// Email invitations — created by admins, delivered via Resend, accepted by the
+// invited email address (whether or not they already have a Nova CRM account).
+model Invitation {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  email       String
+  role        String       @default("member") // admin | manager | member
+  token       String       @unique
+  status      String       @default("pending") // pending | accepted | revoked
+  invitedById String?
+  invitedBy   User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([orgId])
+  @@index([email, status])
+}
+
+// ─────────────────────────── Core CRM ───────────────────────────
+
+model Lead {
+  id          String    @id @default(cuid())
+  orgId       String
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  company     String?
+  title       String?
+  source      String    @default("website") // website | referral | ads | event | cold_call | social | partner
+  status      String    @default("new") // new | contacted | qualified | unqualified | converted
+  value       Float     @default(0)
+  notes       String?
+  ownerId     String?
+  convertedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner User?        @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+  @@index([orgId, ownerId])
+}
+
+model Contact {
+  id         String   @id @default(cuid())
+  orgId      String
+  firstName  String
+  lastName   String
+  email      String?
+  phone      String?
+  title      String?
+  accountId  String?
+  lifecycle  String   @default("lead") // lead | marketing_qualified | sales_qualified | customer | evangelist
+  source     String   @default("website")
+  ownerId    String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner   User?        @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  account Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  deals   Deal[]
+
+  @@index([orgId, lifecycle])
+  @@index([orgId, ownerId])
+  @@index([accountId])
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  website   String?
+  phone     String?
+  industry  String?
+  size      String?  // 1-10 | 11-50 | 51-200 | 201-1000 | 1000+
+  tier      String   @default("standard") // standard | silver | gold | platinum
+  city      String?
+  country   String?
+  revenue   Float?
+  ownerId   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner    User?        @relation("AccountOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  contacts Contact[]
+  deals    Deal[]
+
+  @@index([orgId, tier])
+  @@index([orgId, ownerId])
+}
+
+model Deal {
+  id               String    @id @default(cuid())
+  orgId            String
+  name             String
+  accountId        String?
+  contactId        String?
+  amount           Float     @default(0)
+  stage            String    @default("qualification") // qualification | needs_analysis | value_prop | negotiation | closed_won | closed_lost
+  probability      Int       @default(20)
+  expectedCloseAt  DateTime?
+  closedAt         DateTime?
+  source           String    @default("website")
+  ownerId          String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner   User?        @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  account Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  contact Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, stage])
+  @@index([orgId, ownerId])
+  @@index([accountId])
+  @@index([contactId])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  orgId       String
+  title       String
+  description String?
+  status      String    @default("not_started") // not_started | in_progress | completed | deferred
+  priority    String    @default("normal") // low | normal | high | urgent
+  dueAt       DateTime?
+  relatedType String?   // lead | contact | account | deal
+  relatedId   String?
+  assigneeId  String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignee User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+  @@index([assigneeId])
+  @@index([dueAt])
+}
+
+model Activity {
+  id          String   @id @default(cuid())
+  orgId       String
+  type        String   @default("note") // note | call | meeting | email | whatsapp | task
+  subject     String
+  body        String?
+  outcome     String?  // connected | no_answer | left_voicemail | scheduled | interested | not_interested
+  durationMin Int?
+  relatedType String?  // lead | contact | account | deal
+  relatedId   String?
+  userId      String?
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, type])
+  @@index([relatedType, relatedId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  sku         String?
+  category    String?
+  unitPrice   Float    @default(0)
+  billingCycle String  @default("one_time") // one_time | monthly | yearly
+  active      Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ─────────────────────────── Automation & Messaging ───────────────────────────
+
+model Workflow {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  description String?
+  trigger     String   @default("lead.created") // lead.created | lead.status_changed | deal.created | deal.stage_changed | contact.created | task.created
+  conditions  String   @default("[]") // JSON [{field, operator, value}]
+  actions     String   @default("[]") // JSON [{type, config}]
+  active      Boolean  @default(true)
+  runCount    Int      @default(0)
+  lastRunAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, active])
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  subject   String
+  body      String
+  category  String   @default("general") // general | sales | onboarding | support | marketing
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([orgId])
+}
+
+model Campaign {
+  id             String    @id @default(cuid())
+  orgId          String
+  name           String
+  templateId     String?
+  segment        String    @default("all") // all | customers | prospects | newsletter
+  status         String    @default("draft") // draft | sending | sent
+  recipientCount Int       @default(0)
+  sentCount      Int       @default(0)
+  openCount      Int       @default(0)
+  clickCount     Int       @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  org      Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  template EmailTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+}
+
+// ─────────────────────────── Platform ───────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  title     String
+  body      String?
+  type      String   @default("info") // info | success | warning | deal | task | team | billing
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([orgId])
+}
+
+model Integration {
+  id          String   @id @default(cuid())
+  orgId       String
+  provider    String // supabase | vercel | github | resend | whatsapp | slack | stripe | zapier | google | mailchimp | twilio | hubspot
+  status      String   @default("connected") // connected | error | disabled
+  config      String   @default("{}") // JSON, secrets masked on read
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, provider])
+}
+
+model Invoice {
+  id       String   @id @default(cuid())
+  orgId    String
+  number   String
+  plan     String
+  cycle    String   @default("monthly")
+  seats    Int      @default(1)
+  amount   Float
+  currency String   @default("USD")
+  status   String   @default("paid") // paid | open | void
+  date     DateTime @default(now())
+  dueAt    DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String?
+  action    String // signup | signin | create | update | delete | convert | invite | subscribe | connect | disconnect | send | import
+  entity    String?
+  entityId  String?
+  summary   String
+  createdAt DateTime @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, entity])
+}

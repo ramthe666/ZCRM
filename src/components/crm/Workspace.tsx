@@ -336,15 +336,17 @@ function DemoBanner({ role, onStartTrial }: { role: string; onStartTrial: () => 
         initial={{ opacity: 0, y: -6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="mb-4 flex flex-wrap items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 dark:border-amber-500/25 dark:bg-amber-500/10"
+        className="mb-4 flex flex-col gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-500/10 sm:flex-row sm:items-center sm:gap-2.5 sm:py-2.5"
         role="note"
       >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400">
-          <FlaskConical className="h-5 w-5" />
-        </span>
-        <p className="min-w-0 flex-1 text-sm text-amber-900 dark:text-amber-100">
-          You&apos;re exploring the shared demo workspace — sample data, visible to everyone, resets periodically.
-        </p>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400">
+            <FlaskConical className="h-5 w-5" />
+          </span>
+          <p className="min-w-0 flex-1 text-sm text-amber-900 dark:text-amber-100">
+            You&apos;re exploring the shared demo workspace — sample data, visible to everyone, resets periodically.
+          </p>
+        </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Button className="h-11 bg-amber-600 px-4 text-white hover:bg-amber-700" onClick={onStartTrial}>
             <Sparkles className="mr-1.5 h-4 w-4" /> Create your own workspace
