@@ -71,6 +71,8 @@ export function DealsView({ role }: { role: string }) {
       setMembers(m.rows.map((x) => ({ value: String((x.user as Row)?.id ?? ''), label: String((x.user as Row)?.name ?? '') })))
       setAccounts(a.rows.map((x) => ({ value: String(x.id), label: String(x.name) })))
       setContacts(c.rows.map((x) => ({ value: String(x.id), label: personName(x) })))
+    }).catch(() => {
+      // Best-effort option lists — the deals table itself still loads.
     })
     return () => {
       alive = false

@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     })
     if (memberships.length === 0) throw new ApiError(403, 'No active workspace found for this account')
 
-    await createSession(user.id, req.headers.get('user-agent'))
+    await createSession(user.id, req)
     await audit(memberships[0].orgId, user.id, 'signin', null, null, `${user.name} signed in`)
 
     return json({

@@ -10,6 +10,7 @@ import { useWorkspace } from '@/lib/store'
 import Landing from '@/components/crm/landing'
 import { AuthView } from '@/components/crm/AuthView'
 import { Workspace } from '@/components/crm/Workspace'
+import { ErrorBoundary } from '@/components/crm/ErrorBoundary'
 import { LogoMark } from '@/components/crm/landing/illustrations'
 
 type AppSession = {
@@ -41,16 +42,28 @@ export default function Page() {
       })
       .catch(() => alive && setSession(null))
       .finally(() => alive && setBooted(true))
+
+    // Surface any stray unhandled rejection as a calm toast instead of silence.
+    const onReject = (e: PromiseRejectionEvent) => {
+      console.warn('[unhandled rejection]', e.reason)
+    }
+    window.addEventListener('unhandledrejection', onReject)
     return () => {
       alive = false
+      window.removeEventListener('unhandledrejection', onReject)
     }
   }, [])
 
   const handleAuthSuccess = (payload: SessionPayload & { user: SessionUser }) => {
+    const activeOrgId = payload.activeOrgId ?? payload.memberships?.[0]?.org.id ?? ''
+    // Always pin the active org to the freshly authenticated account so a stale
+    // value from a previous session (different account / reset database) can
+    // never leak into subsequent X-Org-Id headers.
+    if (activeOrgId) setActiveOrgId(activeOrgId)
     setSession({
       user: payload.user,
       memberships: payload.memberships ?? [],
-      activeOrgId: payload.activeOrgId ?? payload.memberships?.[0]?.org.id ?? '',
+      activeOrgId,
     })
     setView('landing')
     bump()
@@ -58,6 +71,8 @@ export default function Page() {
 
   const handleSignOut = async () => {
     await api('/api/auth/signout', { method: 'POST' }).catch(() => {})
+    // Drop the org pin so the next account starts from a clean slate.
+    if (typeof window !== 'undefined') window.localStorage.removeItem('nova-active-org')
     setSession(null)
     setView('landing')
   }
@@ -109,16 +124,18 @@ export default function Page() {
         (() => {
           const membership = session.memberships.find((m) => m.org.id === session.activeOrgId) ?? session.memberships[0]
           return (
-            <Workspace
-              user={session.user}
-              org={membership.org}
-              role={membership.role}
-              memberships={session.memberships}
-              onUserUpdated={handleUserUpdated}
-              onOrgUpdated={handleOrgUpdated}
-              onSwitchOrg={handleSwitchOrg}
-              onSignOut={handleSignOut}
-            />
+            <ErrorBoundary onSignOut={handleSignOut} area="workspace">
+              <Workspace
+                user={session.user}
+                org={membership.org}
+                role={membership.role}
+                memberships={session.memberships}
+                onUserUpdated={handleUserUpdated}
+                onOrgUpdated={handleOrgUpdated}
+                onSwitchOrg={handleSwitchOrg}
+                onSignOut={handleSignOut}
+              />
+            </ErrorBoundary>
           )
         })()
       ) : view === 'auth' ? (

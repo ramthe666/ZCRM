@@ -23,17 +23,26 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 // ── Sessions ────────────────────────────────────────────────────────────────
 
-export async function createSession(userId: string, userAgent?: string | null) {
+export async function createSession(userId: string, req?: Request) {
   const token = randomUUID().replace(/-/g, '') + randomBytes(24).toString('hex')
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400000)
-  await db.session.create({ data: { token, userId, expiresAt, userAgent: userAgent ?? null } })
+  await db.session.create({ data: { token, userId, expiresAt, userAgent: req?.headers.get('user-agent') ?? null } })
   const jar = await cookies()
+
+  // Adaptive cookie policy:
+  // - Over HTTPS (Vercel, Supabase, or an HTTPS preview proxy) we use SameSite=None; Secure
+  //   so the session also works when the app is embedded in a cross-site iframe
+  //   (e.g. sandbox preview panels). SameSite=None requires Secure.
+  // - Over plain HTTP (local dev) we use SameSite=Lax, which browsers accept without Secure.
+  const forwardedProto = req?.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
+  const isHttps = forwardedProto === 'https' || req?.url.startsWith('https://') === true
+
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: isHttps ? 'none' : 'lax',
     path: '/',
     expires: expiresAt,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttps,
   })
   return token
 }
@@ -71,8 +80,12 @@ export async function getAuth(req?: Request): Promise<AuthContext | null> {
   }
 
   const headerOrg = req?.headers.get('x-org-id') || undefined
-  const membership = await db.membership.findFirst({
-    where: { userId: session.userId, status: 'active', ...(headerOrg ? { orgId: headerOrg } : {}) },
+  // Fetch all active memberships, then prefer the requested org. If the client
+  // sent a stale/foreign X-Org-Id (e.g. leftover localStorage from a previous
+  // account), we fall back to the user's first membership instead of treating
+  // them as signed out — org switching races and stale browsers self-heal.
+  const memberships = await db.membership.findMany({
+    where: { userId: session.userId, status: 'active' },
     include: {
       org: {
         select: { id: true, name: true, slug: true, plan: true, planStatus: true, billingCycle: true, currency: true, trialEndsAt: true, billingEmail: true },
@@ -80,7 +93,9 @@ export async function getAuth(req?: Request): Promise<AuthContext | null> {
     },
     orderBy: { createdAt: 'asc' },
   })
-  if (!membership) return null
+  if (memberships.length === 0) return null
+  const membership =
+    (headerOrg ? memberships.find((m) => m.orgId === headerOrg) : undefined) ?? memberships[0]
 
   return {
     user: session.user,

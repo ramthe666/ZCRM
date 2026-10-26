@@ -82,6 +82,9 @@ export function EntityView({ entity, role }: { entity: string; role: string }) {
         contacts: (contacts?.rows ?? []).map((c) => ({ value: String(c.id), label: personName(c) })),
         templates: (templates?.rows ?? []).map((t) => ({ value: String(t.id), label: String(t.name) })),
       })
+    }).catch(() => {
+      // Option sources are best-effort — record forms still work with free-text fallbacks.
+      if (alive) setSources((s) => s)
     })
     return () => {
       alive = false

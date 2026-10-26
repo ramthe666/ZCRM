@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     await seedOrgData(org.id, user.id, false).catch((e) => console.error('[seed]', e))
 
     await audit(org.id, user.id, 'signup', 'organization', org.id, `${user.name} created workspace "${org.name}"`)
-    await createSession(user.id, req.headers.get('user-agent'))
+    await createSession(user.id, req)
 
     return json(
       {
