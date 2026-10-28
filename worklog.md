@@ -264,3 +264,28 @@ Work Log:
 Stage Summary:
 - User action: nothing manual — the push triggers a Vercel redeploy automatically. After it finishes (≈2–3 min), open https://zcrm11.vercel.app/api/health: expect {"ok":true,...,"connected":true}. Then sign up / sign in with demo@novacrm.io — both should work. If /api/health still reports an issue, it now says exactly what and how to fix it.
 - If the Vercel project was imported BEFORE vercel.json existed and still shows a custom/default Build Command, either set it once to `bash scripts/vercel-build.sh` or delete + re-import the project — vercel.json then governs every deploy.
+
+---
+Task ID: 11
+Agent: main (Z.ai Code)
+Task: Fix migration 0006 failing with `0A000: cannot alter type of a column used in a policy definition` (policy memberships_tenant_insert depends on memberships.status)
+
+Work Log:
+- User reported: running 0006_prisma_compat.sql fails at the memberships block — PostgreSQL refuses `ALTER TABLE ... ALTER COLUMN status TYPE text` with SQLSTATE 0A000 because the RLS policy `memberships_tenant_insert` (0002_rls.sql §6) has `status = 'invited'` in its WITH CHECK. PostgreSQL never rebuilds policies on column type changes — the dependent policy must be dropped first.
+- Audited the ENTIRE schema for other blockers before editing (migrations 0001→0005 are untouched, as promised):
+  * Grepped every policy expression in 0002 + 0004 for all 29 converted column names — memberships_tenant_insert is the ONE and ONLY policy referencing a converted column. All other policies filter on org_id / user_id / id / current_setting / true.
+  * Helper functions (current_user_org_ids, is_org_admin, current_user_row_ids, current_user_emails) DO reference m.status / m.role — but function bodies never block ALTER COLUMN TYPE (re-parsed at runtime; text = 'literal' works identically after conversion).
+  * No views / materialized views / statistics objects / domains / generated columns anywhere (would also block). Indexes and CHECK constraints rebuild/revalidate automatically. users/sessions/audit_logs/invitations have no enum columns.
+  * 0001 defines no CHECK constraints on enum columns → zero name collisions with 0006's *_values_check constraints.
+- Fix (only 0006_prisma_compat.sql + docs changed):
+  1. §2 memberships DO block: `DROP POLICY IF EXISTS memberships_tenant_insert` added INSIDE the `status`-is-enum guard, immediately before the ALTER (drop + convert are one atomic DO statement — they commit or roll back together, so the policy can never be left dropped by a failed run).
+  2. After the DO block: unguarded, idempotent `DROP POLICY IF EXISTS` + `CREATE POLICY memberships_tenant_insert` restoring the EXACT 0002 definition (byte-identical) — self-healing in every partial-application scenario, including a first 0006 attempt that may have already committed §1 (organizations) before failing at §2.
+  3. NEW CHECK E: verifies memberships_tenant_insert exists after the migration (pg_policy lookup) — screams if it's ever missing.
+  4. Header/APPLY ORDER/closing comments rewritten to document the 0A000 cause, the one-policy treatment, and the re-run instructions; README.md migration table + troubleshooting table updated with the 0A000 row.
+- Idempotency preserved end-to-end: conversions still guarded on data_type = 'USER-DEFINED' (skips whatever the failed first attempt already committed), constraints on IF NOT EXISTS, policy recreate is DROP IF EXISTS + CREATE. Re-running from the top is safe in every state.
+- Consistency with 0003_verification.sql: CHECK 2 (enum types) still passes — types kept; CHECK 5 (exact policy inventory, 152 policies after 0004) still passes — the policy is recreated with the same name and definition, so count and names are unchanged.
+- Verification: DO-block balance (21 open / 21 close, 42 dollar-quotes — even), 2 DROP POLICY + 1 CREATE POLICY as designed; logic walked through for all three DB states (clean apply, §1-committed partial, full rollback); bun run lint clean; dev.log reviewed — no errors.
+- Pushed: this commit → github.com/ramthe666/ZCRM main.
+
+Stage Summary:
+- User action: re-run the NEW 0006_prisma_compat.sql from the top in the Supabase SQL Editor (paste the whole file, Run). Whatever the failed attempt already committed is skipped automatically. Expect "Success" + CHECK A–E OK notices. Sign-up then works (the enum→text conversion is the fix for the 42804 write failures).

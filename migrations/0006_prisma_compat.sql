@@ -24,17 +24,37 @@
 --     `USING <col>::text`), restoring plain text defaults where 0001 had them.
 --   * Adds one CHECK constraint per converted column, listing the exact values
 --     of the original enum — no domain is widened or narrowed.
+--   * Handles the ONE RLS policy whose expression references a converted
+--     column: `memberships_tenant_insert` (0002_rls.sql §6) has
+--     `status = 'invited'` in its WITH CHECK, and PostgreSQL refuses to
+--     ALTER COLUMN TYPE while any policy depends on the column
+--     (SQLSTATE 0A000: "cannot alter type of a column used in a policy
+--     definition"). This migration drops that policy immediately before the
+--     conversion and recreates it — byte-identical to 0002 — immediately
+--     after. No other policy in the schema references a converted column
+--     (all other policies filter on org_id / user_id / id / current_setting).
+--     The recreate is unguarded and idempotent (DROP IF EXISTS + CREATE), so
+--     the policy is guaranteed to exist with the exact 0002 definition after
+--     this file runs, in every partial-application scenario.
 --   * Does NOT drop the 23 enum types (0003_verification.sql CHECK 2 still
 --     passes if you re-run it — they are simply unused after this file).
---   * Does NOT touch tables, policies, helpers, triggers, indexes or grants
---     from 0001–0005. ALTER COLUMN TYPE preserves RLS flags, policies and
+--   * Does NOT touch any other policy, helper, trigger, index or grant from
+--     0001–0005. ALTER COLUMN TYPE preserves RLS flags, policies and
 --     triggers; indexes on converted columns are rebuilt automatically with
 --     identical definitions.
 --
 -- APPLY ORDER
 --   Run AFTER 0001 → 0002 → 0003 → 0004 → 0005 (0005 is optional).
 --   Safe to re-run (idempotent): conversions are guarded on the column still
---   being enum-typed; constraints on not already existing.
+--   being enum-typed; constraints on not already existing; the
+--   memberships_tenant_insert policy is dropped before the memberships.status
+--   conversion and recreated (identical definition) afterwards — re-running
+--   always leaves it in place (CHECK E verifies this).
+--
+--   If a previous attempt of this file failed with
+--   `0A000: cannot alter type of a column used in a policy definition`,
+--   just re-run THIS file from the top — every step is guarded, so whatever
+--   was committed by the earlier attempt is skipped and the rest is applied.
 --
 -- Apply as the `postgres` role (Supabase Dashboard → SQL Editor → paste & Run,
 -- or: psql "$DIRECT_URL" -f migrations/0006_prisma_compat.sql).
@@ -111,6 +131,15 @@ END $$;
 
 -- -----------------------------------------------------------------------------
 -- 2. memberships — role, status
+--
+--    memberships.status is the ONLY converted column referenced by an RLS
+--    policy (memberships_tenant_insert: `... AND status = 'invited'`, see
+--    0002_rls.sql §6). PostgreSQL raises 0A000 "cannot alter type of a column
+--    used in a policy definition" unless the dependent policy is dropped
+--    first — so it is dropped inside the guard below and recreated, with the
+--    exact 0002 definition, right after this block. memberships.role has NO
+--    policy dependency (the role checks live inside the is_org_admin()
+--    helper function, and function bodies never block ALTER COLUMN TYPE).
 -- -----------------------------------------------------------------------------
 DO $$
 BEGIN
@@ -133,6 +162,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name = 'memberships'
                AND column_name = 'status' AND data_type = 'USER-DEFINED') THEN
+    -- 0A000 fix: this policy's WITH CHECK depends on memberships.status,
+    -- so it MUST be dropped before the type change (recreated below).
+    DROP POLICY IF EXISTS memberships_tenant_insert ON public.memberships;
     ALTER TABLE public.memberships
       ALTER COLUMN status DROP DEFAULT,
       ALTER COLUMN status TYPE text USING status::text,
@@ -146,6 +178,15 @@ BEGIN
       CHECK (status IN ('active', 'invited'));
   END IF;
 END $$;
+
+-- Restore memberships_tenant_insert EXACTLY as 0002_rls.sql defines it
+-- (self-healing: DROP IF EXISTS + CREATE is idempotent, so re-running this
+--  file — or recovering from any partial application — always leaves the
+--  policy in place with the original definition).
+DROP POLICY IF EXISTS memberships_tenant_insert ON public.memberships;
+CREATE POLICY memberships_tenant_insert ON public.memberships
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id IN (SELECT public.current_user_row_ids()) AND status = 'invited');
 
 -- -----------------------------------------------------------------------------
 -- 3. leads — source, status
@@ -730,11 +771,29 @@ BEGIN
   RAISE NOTICE '0006 CHECK D OK — set_updated_at triggers intact on all 13 tables.';
 END $$;
 
+-- CHECK E — memberships_tenant_insert was dropped for the memberships.status
+-- conversion and MUST be back afterwards, byte-identical to 0002_rls.sql
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policy p
+    JOIN pg_class c     ON c.oid = p.polrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+    WHERE c.relname = 'memberships'
+      AND p.polname = 'memberships_tenant_insert'
+  ) THEN
+    RAISE EXCEPTION '0006 CHECK E FAILED — memberships_tenant_insert policy is missing (it must be recreated after the memberships.status conversion)';
+  END IF;
+  RAISE NOTICE '0006 CHECK E OK — memberships_tenant_insert policy restored.';
+END $$;
+
 -- =============================================================================
 -- 0006 complete.
 --   * 29 enum columns → text (values preserved, domains enforced by CHECKs)
 --   * 23 native enum types kept (unused) so 0003_verification.sql stays green
---   * RLS policies, helper functions, triggers, indexes, grants: untouched
+--   * memberships_tenant_insert dropped around the status conversion and
+--     recreated byte-identical (the ONLY policy touched — see §2); every
+--     other policy, helper function, trigger, index and grant: untouched
 --   * prisma/schema.postgres.prisma now maps 1:1 onto this database —
 --     redeploy the app (scripts/vercel-build.sh) and sign-up will work.
 -- =============================================================================
