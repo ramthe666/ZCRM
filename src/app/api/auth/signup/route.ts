@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { ApiError, createSession, errorResponse, hashPassword, json, rateLimit } from '@/lib/auth'
 import { seedOrgData } from '@/lib/seed'
 import { audit, notify } from '@/lib/events'
-import { sendMail, welcomeEmail } from '@/lib/mailer'
+import { appBaseUrl, sendMail, welcomeEmail } from '@/lib/mailer'
 
 const schema = z.object({
   name: z.string().min(2, 'Name is too short').max(80),
@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     await createSession(user.id, req)
 
     // Welcome email — async best-effort, must never fail signup.
-    const welcome = welcomeEmail({ name: user.name, orgName: org.name })
+    const welcome = welcomeEmail({ name: user.name, orgName: org.name, appUrl: appBaseUrl(req) })
     sendMail({ to: normalizedEmail, subject: welcome.subject, html: welcome.html, text: welcome.text }).catch((e) =>
       console.error('[mailer] welcome email failed:', e instanceof Error ? e.message : e)
     )

@@ -57,7 +57,7 @@ BEGIN
   IF to_regprocedure('public.set_updated_at()') IS NULL THEN
     RAISE EXCEPTION 'Function public.set_updated_at() not found — run 0001_init.sql before 0004_invitations.sql.';
   END IF;
-  IF to_regprocedure('public.current_user_row_ids') IS NULL
+  IF to_regprocedure('public.current_user_row_ids()') IS NULL
      OR to_regprocedure('public.is_org_member(text)') IS NULL THEN
     RAISE EXCEPTION 'RLS helper functions not found — run 0002_rls.sql before 0004_invitations.sql.';
   END IF;
@@ -256,13 +256,12 @@ BEGIN
     RAISE EXCEPTION '0004 CHECK FAILED — unexpected policy inventory on public.invitations (%, found: %)', v_count, coalesce(v_policies, '<none>');
   END IF;
 
-  -- No anon/PUBLIC policies
+  -- No anon/PUBLIC policies (same pg_policies pattern as 0003 CHECK 6 —
+  -- pg_policy.polroles stores PUBLIC as oid 0, so cast-free view is simpler)
   SELECT count(*) INTO v_anon
-  FROM pg_policy p
-  JOIN pg_class c     ON c.oid = p.polrelid
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public' AND c.relname = 'invitations'
-    AND (p.polroles @> ARRAY['anon']::regrole[] OR p.polroles @> ARRAY['public']::regrole[]);
+  FROM pg_policies p
+  WHERE p.schemaname = 'public' AND p.tablename = 'invitations'
+    AND ('anon' = ANY (p.roles) OR 'public' = ANY (p.roles));
   IF v_anon <> 0 THEN
     RAISE EXCEPTION '0004 CHECK FAILED — anon/PUBLIC policies must not exist on public.invitations.';
   END IF;
@@ -272,7 +271,6 @@ END $$;
 
 -- =============================================================================
 -- 0004 complete. Total policy count is now 146 + 6 = 152 across 19 tables.
--- Re-running 0003_verification.sql afterwards will fail its CHECK 5 inventory
--- by design (it pins the 18-table / 146-policy state of 0001+0002) — treat
--- 0003 as the verification of the base layer, this block as 0004's.
+-- 0003_verification.sql is invitations-aware: re-running it after this file
+-- verifies all 152 policies (base 146 + the 6 invitation policies above).
 -- =============================================================================

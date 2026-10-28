@@ -34,6 +34,33 @@ type AppSession = {
 
 const INVITE_INVALID_MSG = 'This invitation link is invalid or has expired'
 
+/** Auth routes — served by the `/` page via next.config.ts rewrites. */
+const AUTH_PATHS = new Set(['/signup', '/signin', '/login'])
+
+/** Derive the (view, authMode) pair the URL stands for. */
+function routeFromPath(pathname: string): { view: 'landing' | 'auth'; authMode: 'signin' | 'signup' } {
+  if (pathname === '/signup') return { view: 'auth', authMode: 'signup' }
+  if (pathname === '/signin' || pathname === '/login') return { view: 'auth', authMode: 'signin' }
+  return { view: 'landing', authMode: 'signup' }
+}
+
+/** Client-side navigation that keeps the address bar in sync (no reload). */
+function pushUrl(path: string) {
+  try {
+    window.history.pushState(null, '', path)
+  } catch {
+    /* best-effort */
+  }
+}
+
+function replaceUrl(path: string) {
+  try {
+    window.history.replaceState(null, '', path)
+  } catch {
+    /* best-effort */
+  }
+}
+
 interface PublicInviteInfo {
   invitation: {
     email: string
@@ -71,6 +98,12 @@ export default function Page() {
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signup')
   const [inviteContext, setInviteContext] = React.useState<InviteContext | null>(null)
   const bump = useWorkspace((s) => s.bump)
+
+  // Latest session for the popstate handler (stable subscription, no re-binding).
+  const sessionRef = React.useRef<AppSession | null>(null)
+  React.useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   /** Re-fetch the session (memberships + pending invitations) while keeping the current workspace. */
   const refreshSession = React.useCallback(async (keepOrgId?: string) => {
@@ -202,11 +235,22 @@ export default function Page() {
         setSession(null)
       }
 
-      // 5) Not signed in + valid invite → straight to the (invitation-aware) auth screen.
-      if (ctx && !me) {
-        setInviteContext(ctx)
-        setAuthMode('signin')
-        setView('auth')
+      // 5) Route to the view the URL stands for (refresh-safe /signup, /signin).
+      //    A restored session wins: the workspace is the app — normalize the
+      //    URL to "/" so an auth path can never linger in the address bar.
+      if (me) {
+        if (AUTH_PATHS.has(window.location.pathname)) replaceUrl('/')
+      } else {
+        const r = routeFromPath(window.location.pathname)
+        setView(r.view)
+        setAuthMode(r.authMode)
+        if (ctx) {
+          // Invite deep link + signed out → the invitation-aware sign-in screen.
+          setInviteContext(ctx)
+          setAuthMode('signin')
+          setView('auth')
+          replaceUrl('/signin')
+        }
       }
 
       setBooted(true)
@@ -241,6 +285,24 @@ export default function Page() {
     }
   }, [acceptInvite])
 
+  // Browser back/forward re-routes the app from the URL (auth screens ↔
+  // landing). While signed in, the workspace is the app — the URL stays at "/".
+  React.useEffect(() => {
+    if (!booted) return
+    const onPop = () => {
+      if (sessionRef.current) {
+        if (AUTH_PATHS.has(window.location.pathname)) replaceUrl('/')
+        return
+      }
+      const r = routeFromPath(window.location.pathname)
+      setView(r.view)
+      setAuthMode(r.authMode)
+      if (r.view === 'landing') setInviteContext(null)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [booted])
+
   const handleAuthSuccess = async (payload: SessionPayload & { user: SessionUser }) => {
     const activeOrgId = payload.activeOrgId ?? payload.memberships?.[0]?.org.id ?? ''
     // Always pin the active org to the freshly authenticated account so a stale
@@ -254,6 +316,7 @@ export default function Page() {
       pendingInvitations: payload.pendingInvitations ?? [],
     })
     setView('landing')
+    pushUrl('/')
     bump()
 
     // Invitation flow: accept the pending deep-link invite with the fresh
@@ -275,6 +338,7 @@ export default function Page() {
     if (typeof window !== 'undefined') window.localStorage.removeItem('nova-active-org')
     setSession(null)
     setView('landing')
+    pushUrl('/')
   }
 
   /** Demo banner: leave the shared workspace and create your own. */
@@ -285,6 +349,7 @@ export default function Page() {
     setInviteContext(null)
     setAuthMode('signup')
     setView('auth')
+    pushUrl('/signup')
   }
 
   const handleSwitchOrg = async (orgId: string) => {
@@ -384,11 +449,16 @@ export default function Page() {
       ) : view === 'auth' ? (
         <AuthView
           mode={authMode}
-          onModeChange={setAuthMode}
+          onModeChange={(m) => {
+            setAuthMode(m)
+            // Same logical screen — replace, so Back still returns to the landing.
+            replaceUrl(m === 'signup' ? '/signup' : '/signin')
+          }}
           onSuccess={handleAuthSuccess}
           onBack={() => {
             setInviteContext(null)
             setView('landing')
+            pushUrl('/')
           }}
           invite={inviteContext}
         />
@@ -397,10 +467,12 @@ export default function Page() {
           onSignIn={() => {
             setAuthMode('signin')
             setView('auth')
+            pushUrl('/signin')
           }}
           onSignUp={() => {
             setAuthMode('signup')
             setView('auth')
+            pushUrl('/signup')
           }}
         />
       )}

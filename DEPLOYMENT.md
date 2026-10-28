@@ -132,7 +132,7 @@ not by Prisma migrations.** Never run `prisma db push` against production.
    | ---------------- | ------------------------------------------------------------------------------------------------------ | --------- |
    | `DATABASE_URL`   | `postgresql://postgres.abc123:PASS@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1` | **Yes** |
    | `DIRECT_URL`     | `postgresql://postgres.abc123:PASS@db.abc123.supabase.co:5432/postgres`                                 | **Yes** |
-   | `APP_URL`        | `https://zcrm.vercel.app` (your final URL — see below)                                                  | Yes* |
+   | `APP_URL`        | `https://zcrm11.vercel.app` (your final URL — see below)                                                | Yes* |
    | `RESEND_API_KEY` | `re_…`                                                                                                 | No — without it email runs in demo mode (§3) |
    | `MAIL_FROM`      | `Nova CRM <noreply@yourdomain.com>`                                                                     | No — defaults to `Nova CRM <onboarding@resend.dev>` |
 
@@ -142,17 +142,31 @@ not by Prisma migrations.** Never run `prisma db push` against production.
    the import name), or deploy once, then set `APP_URL` and **redeploy**
    (Deployments → ⋯ → Redeploy). If you use a custom domain, set `APP_URL`
    to that domain and redeploy. No trailing slash.
+   **Fallback:** even with `APP_URL` unset, links are built from the request's
+   own origin (`x-forwarded-host`), so they always point at the domain the
+   invitation was sent from. `APP_URL` just makes them explicit and stable.
 
 5. **Deploy** and wait for the build (≈2–3 min). Then run the
    **first-deploy checklist**:
 
    - [ ] Open the deployment URL — the Nova CRM landing page renders.
+   - [ ] `/signup` and `/signin` open the auth screens directly and **survive a
+         hard refresh** (the address bar keeps the URL; no bounce to `/`).
    - [ ] Sign in with the demo account: `demo@novacrm.io` / `Demo1234!`
          (requires `0005_demo_seed.sql`; otherwise create your own workspace
          via Sign up).
    - [ ] Team → Invite a teammate (your own inbox) — if Resend is configured
          (§3) an invitation email arrives; if not, the UI shows a copy-link
          fallback (that's demo mode, not an error).
+
+**One URL only.** Every Vercel *project* gets its own `<name>.vercel.app`
+domain — if you imported the GitHub repo twice you have **two projects** and
+therefore two URLs. Keep the one you want (e.g. `zcrm11` →
+`https://zcrm11.vercel.app`): open the *other* project → Settings → General →
+**Delete Project**. (A project also shows extra auto-generated *deployment*
+URLs like `zcrm11-git-main-….vercel.app` / `zcrm11-….vercel.app` — those are
+normal aliases of the same deployment, not separate apps; the production
+domain is the one linked on the project's Domains page.)
 
 ---
 
@@ -285,7 +299,7 @@ Other handy scripts: `bun run db:generate` (regenerate the Prisma client),
 | **RLS errors / empty lists** (`new row violates row-level security policy`, or every query returns 0 rows) | Migrations out of order — apply `0001 → 0002 → 0003 → 0004` in order (0003 must pass silently). If you deliberately connect as `nova_app` (strict mode), every transaction must `SET LOCAL app.org_id` — the current app does not do this yet, so use the `postgres` credentials as documented in §1. |
 | **Resend 403 / emails not arriving** | Sending domain not verified in Resend (add SPF/DKIM records), or `MAIL_FROM` isn't on the verified domain. `onboarding@resend.dev` only delivers to the Resend account owner. |
 | **Demo sign-in 404 / "no workspace"** | `0005_demo_seed.sql` wasn't applied — run it in the Supabase SQL Editor (after 0001–0004), then sign in again. |
-| **Invite links point at localhost** | `APP_URL` is unset or stale in Vercel — set it to the production URL and redeploy. |
+| **Invite links point at localhost** | `APP_URL` is unset or stale in Vercel — set it to the production URL and redeploy. (Links built during serverless invocations fall back to the request's own origin, so this only happens for links generated where no origin header exists.) |
 | **`prisma db push` accidentally run against prod** | Don't — the SQL files in `migrations/` are the source of truth for production; `db push` would try to rewrite the native enums and bypass the migration history. |
 
 ---

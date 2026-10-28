@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,26 +13,48 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+  metadataBase: new URL(appUrl),
+  title: {
+    default: "Nova CRM — the calm, fast CRM for revenue teams",
+    template: "%s · Nova CRM",
   },
+  description:
+    "Nova CRM is a refreshingly calm, fast CRM: pipeline, contacts, deals, tasks, automation, campaigns and reports — with a free 14-day trial and a live demo workspace.",
+  keywords: [
+    "CRM",
+    "Nova CRM",
+    "sales pipeline",
+    "deal management",
+    "contacts",
+    "sales automation",
+    "lead tracking",
+    "small business CRM",
+    "team workspace",
+  ],
+  authors: [{ name: "Nova CRM" }],
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "Nova CRM — the calm, fast CRM for revenue teams",
+    description:
+      "Pipeline, contacts, deals, tasks, automation, campaigns and reports in one calm workspace. Start free or try the live demo.",
+    url: appUrl,
+    siteName: "Nova CRM",
     type: "website",
   },
   twitter: {
-    card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    card: "summary",
+    title: "Nova CRM — the calm, fast CRM for revenue teams",
+    description:
+      "Pipeline, contacts, deals, tasks, automation, campaigns and reports in one calm workspace.",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#10b981",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

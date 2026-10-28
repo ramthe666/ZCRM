@@ -13,7 +13,7 @@
 -- nova_app strict-mode walkthrough.
 --
 -- Expected: 18 tables, 23 enum types, 5 helper functions,
--- 146 RLS policies.
+-- 146 RLS policies (152 once 0004_invitations.sql is applied).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -76,7 +76,7 @@ DECLARE
   v_bad     int;
 BEGIN
   SELECT string_agg(f.name, ', ') INTO v_missing
-  FROM (VALUES ('current_user_row_ids', ''), ('current_user_org_ids', ''), ('is_org_member', '(text)'), ('is_org_admin', '(text)'), ('is_org_owner', '(text)')) AS f(name, sig)
+  FROM (VALUES ('current_user_row_ids', '()'), ('current_user_org_ids', '()'), ('is_org_member', '(text)'), ('is_org_admin', '(text)'), ('is_org_owner', '(text)')) AS f(name, sig)
   WHERE to_regprocedure('public.' || f.name || f.sig) IS NULL;
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION 'CHECK 3 FAILED — missing helper functions: %', v_missing;
@@ -126,11 +126,15 @@ END $$;
 -- CHECK 5 — the EXACT policy inventory 0002 installs, table by table
 --           (146 policies). Any drift (missing, renamed or extra
 --           policy) fails with the full diff.
+--           If 0004_invitations.sql has ALSO been applied, its 6 invitation
+--           policies are verified too (152 total) — so this file can be
+--           re-run for re-verification at any stage without false failures.
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
   r     record;
   v_act text;
+  v_exp int;
 BEGIN
   FOR r IN
     SELECT * FROM (VALUES
@@ -160,16 +164,32 @@ BEGIN
     WHERE p.schemaname = 'public' AND p.tablename = r.tbl;
 
     IF v_act IS DISTINCT FROM r.names THEN
-      RAISE EXCEPTION 'CHECK 5 FAILED — policy inventory mismatch on "%":%expected: %%found:    %',
+      RAISE EXCEPTION 'CHECK 5 FAILED — policy inventory mismatch on "%": %expected: % %found:    %',
         r.tbl, chr(10), r.names, chr(10), v_act;
     END IF;
   END LOOP;
 
-  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public') <> 146 THEN
-    RAISE EXCEPTION 'CHECK 5 FAILED — expected exactly 146 policies in public, found %',
-      (SELECT count(*) FROM pg_policies WHERE schemaname = 'public');
+  -- 0004_invitations.sql (if applied) must add EXACTLY these 6 policies.
+  v_exp := 146;
+  IF to_regclass('public.invitations') IS NOT NULL THEN
+    SELECT coalesce(string_agg(p.policyname, ',' ORDER BY p.policyname), '')
+      INTO v_act
+    FROM pg_policies p
+    WHERE p.schemaname = 'public' AND p.tablename = 'invitations';
+
+    IF v_act IS DISTINCT FROM
+       'invitations_app_delete,invitations_app_insert,invitations_app_select,invitations_app_update,invitations_owner_admin,invitations_tenant_select' THEN
+      RAISE EXCEPTION 'CHECK 5 FAILED — policy inventory mismatch on "invitations": %expected: invitations_app_delete,invitations_app_insert,invitations_app_select,invitations_app_update,invitations_owner_admin,invitations_tenant_select %found:    %',
+        chr(10), chr(10), coalesce(v_act, '<none>');
+    END IF;
+    v_exp := 152;
   END IF;
-  RAISE NOTICE 'CHECK 5 OK — exact policy inventory verified (146 policies across 18 tables).';
+
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public') <> v_exp THEN
+    RAISE EXCEPTION 'CHECK 5 FAILED — expected exactly % policies in public, found %',
+      v_exp, (SELECT count(*) FROM pg_policies WHERE schemaname = 'public');
+  END IF;
+  RAISE NOTICE 'CHECK 5 OK — exact policy inventory verified (% policies).', v_exp;
 END $$;
 
 -- -----------------------------------------------------------------------------

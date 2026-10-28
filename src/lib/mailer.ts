@@ -56,9 +56,31 @@ export async function sendMail({ to, subject, html, text }: SendMailInput): Prom
   }
 }
 
+// The public base URL of the app, used in emails and invite links.
+// Resolution order:
+//   1. APP_URL env (set it to your production domain on Vercel, no trailing slash)
+//   2. the origin of the current request (x-forwarded-host/proto — works on
+//      Vercel preview + production even when APP_URL is not configured)
+//   3. http://localhost:3000 for local dev
+export function appBaseUrl(req?: Request): string {
+  const fromEnv = process.env.APP_URL?.trim()
+  if (fromEnv) return fromEnv.replace(/\/+$/, '')
+  if (req) {
+    try {
+      const url = new URL(req.url)
+      const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? url.host
+      const proto = req.headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '')
+      return `${proto}://${host}`
+    } catch {
+      /* fall through */
+    }
+  }
+  return 'http://localhost:3000'
+}
+
 // The shareable invite link the email CTA (and the demo-mode copy fallback) uses.
-export function inviteUrl(token: string): string {
-  return `${process.env.APP_URL ?? 'http://localhost:3000'}/?invite=${token}`
+export function inviteUrl(token: string, req?: Request): string {
+  return `${appBaseUrl(req)}/?invite=${token}`
 }
 
 // ── Templates ───────────────────────────────────────────────────────────────
@@ -217,13 +239,21 @@ export function teamInviteEmail({
   return { subject: `You're invited to join ${orgName} on Nova CRM`, html, text }
 }
 
-export function welcomeEmail({ name, orgName }: { name: string; orgName: string }): {
+export function welcomeEmail({
+  name,
+  orgName,
+  appUrl,
+}: {
+  name: string
+  orgName: string
+  appUrl?: string
+}): {
   subject: string
   html: string
   text: string
 } {
   const firstName = name.trim().split(/\s+/)[0] || 'there'
-  const appUrl = process.env.APP_URL ?? 'http://localhost:3000'
+  const appLink = appUrl ?? 'http://localhost:3000'
   const bodyHtml = `
                 <p style="margin:0 0 16px 0;">Welcome aboard, ${firstName} 👋</p>
                 <p style="margin:0 0 16px 0;">
@@ -254,7 +284,7 @@ export function welcomeEmail({ name, orgName }: { name: string; orgName: string 
     title: `Welcome to Nova CRM 🎉`,
     bodyHtml,
     ctaLabel: 'Open my workspace',
-    ctaUrl: appUrl,
+    ctaUrl: appLink,
     footerNote,
   })
 
@@ -270,7 +300,7 @@ export function welcomeEmail({ name, orgName }: { name: string; orgName: string 
     '  2. Set up a workflow to automate follow-ups',
     '  3. Invite your team so deals move faster',
     '',
-    `Open your workspace: ${appUrl}`,
+    `Open your workspace: ${appLink}`,
     '',
     `You're starting on the Starter plan with a 14-day trial — upgrade any time from Billing.`,
     '',

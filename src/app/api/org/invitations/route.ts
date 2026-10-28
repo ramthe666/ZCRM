@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       orgName: auth.org.name,
       inviterName: auth.user.name,
       role: updated.role,
-      inviteUrl: inviteUrl(token),
+      inviteUrl: inviteUrl(token, req),
       expiresAt: updated.expiresAt,
     })
     const result = await sendMail({ to: updated.email, subject: mail.subject, html: mail.html, text: mail.text })
