@@ -1,5 +1,9 @@
 // Nova CRM — Multi-tenant CRM schema
 // Sandbox/dev: SQLite (Prisma). Production: PostgreSQL / Supabase (see /migrations for SQL + RLS)
+//
+// NAMING: identical @@map/@map mappings to prisma/schema.postgres.prisma, so
+// both environments address the exact same snake_case table/column names the
+// SQL migrations create (model User → "users", passwordHash → "password_hash").
 
 generator client {
   provider = "prisma-client-js"
@@ -16,36 +20,39 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String
-  passwordHash String
+  passwordHash String   @map("password_hash")
   title        String?
   phone        String?
-  avatarColor  String   @default("#059669")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  avatarColor  String   @default("#059669") @map("avatar_color")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  memberships   Membership[]
-  sessions      Session[]
-  ownedLeads    Lead[]       @relation("LeadOwner")
-  ownedContacts Contact[]    @relation("ContactOwner")
-  ownedAccounts Account[]    @relation("AccountOwner")
-  ownedDeals    Deal[]       @relation("DealOwner")
-  assignedTasks Task[]       @relation("TaskAssignee")
-  activities    Activity[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  sentInvitations Invitation[] @relation("InvitationInviter")
+  memberships     Membership[]
+  sessions        Session[]
+  ownedLeads      Lead[]         @relation("LeadOwner")
+  ownedContacts   Contact[]      @relation("ContactOwner")
+  ownedAccounts   Account[]      @relation("AccountOwner")
+  ownedDeals      Deal[]         @relation("DealOwner")
+  assignedTasks   Task[]         @relation("TaskAssignee")
+  activities      Activity[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  sentInvitations Invitation[]   @relation("InvitationInviter")
+
+  @@map("users")
 }
 
 model Session {
   id        String   @id @default(cuid())
   token     String   @unique
-  userId    String
+  userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  userAgent String?
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  userAgent String?  @map("user_agent")
 
   @@index([userId])
+  @@map("sessions")
 }
 
 model Organization {
@@ -53,13 +60,13 @@ model Organization {
   name         String
   slug         String    @unique
   plan         String    @default("starter") // starter | standard | professional | enterprise
-  billingCycle String    @default("monthly") // monthly | yearly
-  planStatus   String    @default("trialing") // trialing | active | past_due | canceled
-  trialEndsAt  DateTime?
-  billingEmail String?
+  billingCycle String    @default("monthly") @map("billing_cycle") // monthly | yearly
+  planStatus   String    @default("trialing") @map("plan_status") // trialing | active | past_due | canceled
+  trialEndsAt  DateTime? @map("trial_ends_at")
+  billingEmail String?   @map("billing_email")
   currency     String    @default("USD")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   memberships    Membership[]
   leads          Lead[]
@@ -79,50 +86,53 @@ model Organization {
   auditLogs      AuditLog[]
 
   @@index([slug])
+  @@map("organizations")
 }
 
 model Membership {
   id        String   @id @default(cuid())
-  userId    String
-  orgId     String
+  userId    String   @map("user_id")
+  orgId     String   @map("org_id")
   role      String   @default("member") // owner | admin | manager | member
   status    String   @default("active") // active | invited
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([userId, orgId])
   @@index([orgId])
+  @@map("memberships")
 }
 
 // Email invitations — created by admins, delivered via Resend, accepted by the
 // invited email address (whether or not they already have a Nova CRM account).
 model Invitation {
   id          String       @id @default(cuid())
-  orgId       String
+  orgId       String       @map("org_id")
   org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   email       String
   role        String       @default("member") // admin | manager | member
   token       String       @unique
   status      String       @default("pending") // pending | accepted | revoked
-  invitedById String?
+  invitedById String?      @map("invited_by_id")
   invitedBy   User?        @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
-  expiresAt   DateTime
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  expiresAt   DateTime     @map("expires_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
 
   @@index([orgId])
   @@index([email, status])
+  @@map("invitations")
 }
 
 // ─────────────────────────── Core CRM ───────────────────────────
 
 model Lead {
   id          String    @id @default(cuid())
-  orgId       String
-  firstName   String
-  lastName    String
+  orgId       String    @map("org_id")
+  firstName   String    @map("first_name")
+  lastName    String    @map("last_name")
   email       String?
   phone       String?
   company     String?
@@ -131,33 +141,34 @@ model Lead {
   status      String    @default("new") // new | contacted | qualified | unqualified | converted
   value       Float     @default(0)
   notes       String?
-  ownerId     String?
-  convertedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  ownerId     String?   @map("owner_id")
+  convertedAt DateTime? @map("converted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner User?        @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
   @@index([orgId, ownerId])
+  @@map("leads")
 }
 
 model Contact {
-  id         String   @id @default(cuid())
-  orgId      String
-  firstName  String
-  lastName   String
-  email      String?
-  phone      String?
-  title      String?
-  accountId  String?
-  lifecycle  String   @default("lead") // lead | marketing_qualified | sales_qualified | customer | evangelist
-  source     String   @default("website")
-  ownerId    String?
-  notes      String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  firstName String   @map("first_name")
+  lastName  String   @map("last_name")
+  email     String?
+  phone     String?
+  title     String?
+  accountId String?  @map("account_id")
+  lifecycle String   @default("lead") // lead | marketing_qualified | sales_qualified | customer | evangelist
+  source    String   @default("website")
+  ownerId   String?  @map("owner_id")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner   User?        @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -167,11 +178,12 @@ model Contact {
   @@index([orgId, lifecycle])
   @@index([orgId, ownerId])
   @@index([accountId])
+  @@map("contacts")
 }
 
 model Account {
   id        String   @id @default(cuid())
-  orgId     String
+  orgId     String   @map("org_id")
   name      String
   website   String?
   phone     String?
@@ -181,10 +193,10 @@ model Account {
   city      String?
   country   String?
   revenue   Float?
-  ownerId   String?
+  ownerId   String?  @map("owner_id")
   notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner    User?        @relation("AccountOwner", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -193,24 +205,25 @@ model Account {
 
   @@index([orgId, tier])
   @@index([orgId, ownerId])
+  @@map("accounts")
 }
 
 model Deal {
-  id               String    @id @default(cuid())
-  orgId            String
-  name             String
-  accountId        String?
-  contactId        String?
-  amount           Float     @default(0)
-  stage            String    @default("qualification") // qualification | needs_analysis | value_prop | negotiation | closed_won | closed_lost
-  probability      Int       @default(20)
-  expectedCloseAt  DateTime?
-  closedAt         DateTime?
-  source           String    @default("website")
-  ownerId          String?
-  notes            String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  orgId           String    @map("org_id")
+  name            String
+  accountId       String?   @map("account_id")
+  contactId       String?   @map("contact_id")
+  amount          Float     @default(0)
+  stage           String    @default("qualification") // qualification | needs_analysis | value_prop | negotiation | closed_won | closed_lost
+  probability     Int       @default(20)
+  expectedCloseAt DateTime? @map("expected_close_at")
+  closedAt        DateTime? @map("closed_at")
+  source          String    @default("website")
+  ownerId         String?   @map("owner_id")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner   User?        @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -221,22 +234,23 @@ model Deal {
   @@index([orgId, ownerId])
   @@index([accountId])
   @@index([contactId])
+  @@map("deals")
 }
 
 model Task {
   id          String    @id @default(cuid())
-  orgId       String
+  orgId       String    @map("org_id")
   title       String
   description String?
   status      String    @default("not_started") // not_started | in_progress | completed | deferred
   priority    String    @default("normal") // low | normal | high | urgent
-  dueAt       DateTime?
-  relatedType String?   // lead | contact | account | deal
-  relatedId   String?
-  assigneeId  String?
-  createdById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  dueAt       DateTime? @map("due_at")
+  relatedType String?   @map("related_type") // lead | contact | account | deal
+  relatedId   String?   @map("related_id")
+  assigneeId  String?   @map("assignee_id")
+  createdById String?   @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   assignee User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
@@ -244,170 +258,180 @@ model Task {
   @@index([orgId, status])
   @@index([assigneeId])
   @@index([dueAt])
+  @@map("tasks")
 }
 
 model Activity {
   id          String   @id @default(cuid())
-  orgId       String
+  orgId       String   @map("org_id")
   type        String   @default("note") // note | call | meeting | email | whatsapp | task
   subject     String
   body        String?
   outcome     String?  // connected | no_answer | left_voicemail | scheduled | interested | not_interested
-  durationMin Int?
-  relatedType String?  // lead | contact | account | deal
-  relatedId   String?
-  userId      String?
-  occurredAt  DateTime @default(now())
-  createdAt   DateTime @default(now())
+  durationMin Int?     @map("duration_min")
+  relatedType String?  @map("related_type") // lead | contact | account | deal
+  relatedId   String?  @map("related_id")
+  userId      String?  @map("user_id")
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([orgId, type])
   @@index([relatedType, relatedId])
+  @@map("activities")
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  orgId       String
-  name        String
-  sku         String?
-  category    String?
-  unitPrice   Float    @default(0)
-  billingCycle String  @default("one_time") // one_time | monthly | yearly
-  active      Boolean  @default(true)
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  name         String
+  sku          String?
+  category     String?
+  unitPrice    Float    @default(0) @map("unit_price")
+  billingCycle String   @default("one_time") @map("billing_cycle") // one_time | monthly | yearly
+  active       Boolean  @default(true)
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId])
+  @@map("products")
 }
 
 // ─────────────────────────── Automation & Messaging ───────────────────────────
 
 model Workflow {
-  id          String   @id @default(cuid())
-  orgId       String
+  id          String    @id @default(cuid())
+  orgId       String    @map("org_id")
   name        String
   description String?
-  trigger     String   @default("lead.created") // lead.created | lead.status_changed | deal.created | deal.stage_changed | contact.created | task.created
-  conditions  String   @default("[]") // JSON [{field, operator, value}]
-  actions     String   @default("[]") // JSON [{type, config}]
-  active      Boolean  @default(true)
-  runCount    Int      @default(0)
-  lastRunAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  trigger     String    @default("lead.created") // lead.created | lead.status_changed | deal.created | deal.stage_changed | contact.created | task.created
+  conditions  String    @default("[]") // JSON [{field, operator, value}]
+  actions     String    @default("[]") // JSON [{type, config}]
+  active      Boolean   @default(true)
+  runCount    Int       @default(0) @map("run_count")
+  lastRunAt   DateTime? @map("last_run_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, active])
+  @@map("workflows")
 }
 
 model EmailTemplate {
   id        String   @id @default(cuid())
-  orgId     String
+  orgId     String   @map("org_id")
   name      String
   subject   String
   body      String
   category  String   @default("general") // general | sales | onboarding | support | marketing
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   campaigns Campaign[]
 
   @@index([orgId])
+  @@map("email_templates")
 }
 
 model Campaign {
   id             String    @id @default(cuid())
-  orgId          String
+  orgId          String    @map("org_id")
   name           String
-  templateId     String?
+  templateId     String?   @map("template_id")
   segment        String    @default("all") // all | customers | prospects | newsletter
   status         String    @default("draft") // draft | sending | sent
-  recipientCount Int       @default(0)
-  sentCount      Int       @default(0)
-  openCount      Int       @default(0)
-  clickCount     Int       @default(0)
-  sentAt         DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  recipientCount Int       @default(0) @map("recipient_count")
+  sentCount      Int       @default(0) @map("sent_count")
+  openCount      Int       @default(0) @map("open_count")
+  clickCount     Int       @default(0) @map("click_count")
+  sentAt         DateTime? @map("sent_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  org      Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  template EmailTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  org      Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  template EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
+  @@map("campaigns")
 }
 
 // ─────────────────────────── Platform ───────────────────────────
 
 model Notification {
   id        String   @id @default(cuid())
-  orgId     String
-  userId    String
+  orgId     String   @map("org_id")
+  userId    String   @map("user_id")
   title     String
   body      String?
   type      String   @default("info") // info | success | warning | deal | task | team | billing
   read      Boolean  @default(false)
   link      String?
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
   @@index([orgId])
+  @@map("notifications")
 }
 
 model Integration {
   id          String   @id @default(cuid())
-  orgId       String
+  orgId       String   @map("org_id")
   provider    String // supabase | vercel | github | resend | whatsapp | slack | stripe | zapier | google | mailchimp | twilio | hubspot
   status      String   @default("connected") // connected | error | disabled
   config      String   @default("{}") // JSON, secrets masked on read
-  connectedAt DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  connectedAt DateTime @default(now()) @map("connected_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, provider])
+  @@map("integrations")
 }
 
 model Invoice {
-  id       String   @id @default(cuid())
-  orgId    String
+  id       String    @id @default(cuid())
+  orgId    String    @map("org_id")
   number   String
   plan     String
-  cycle    String   @default("monthly")
-  seats    Int      @default(1)
+  cycle    String    @default("monthly")
+  seats    Int       @default(1)
   amount   Float
-  currency String   @default("USD")
-  status   String   @default("paid") // paid | open | void
-  date     DateTime @default(now())
-  dueAt    DateTime?
+  currency String    @default("USD")
+  status   String    @default("paid") // paid | open | void
+  date     DateTime  @default(now())
+  dueAt    DateTime? @map("due_at")
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId])
+  @@map("invoices")
 }
 
 model AuditLog {
   id        String   @id @default(cuid())
-  orgId     String
-  userId    String?
+  orgId     String   @map("org_id")
+  userId    String?  @map("user_id")
   action    String // signup | signin | create | update | delete | convert | invite | subscribe | connect | disconnect | send | import
   entity    String?
-  entityId  String?
+  entityId  String?  @map("entity_id")
   summary   String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([orgId, createdAt])
   @@index([orgId, entity])
+  @@map("audit_logs")
 }

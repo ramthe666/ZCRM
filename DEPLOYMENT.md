@@ -64,11 +64,15 @@ not by Prisma migrations.** Never run `prisma db push` against production.
    | 3 | `migrations/0003_verification.sql` | "Success" + nine `CHECK n OK …` **notices**. Any red exception = stop and fix (it names the failed check) |
    | 4 | `migrations/0004_invitations.sql` | "Success" + `0004 OK — invitations table + RLS verified …` notice |
    | 5 | `migrations/0005_demo_seed.sql` *(optional)* | "Success" + `0005 OK — demo workspace verified …` notice |
+   | 6 | `migrations/0006_prisma_compat.sql` | "Success" + four `0006 CHECK A–D OK …` notices |
 
    `0005` seeds the shared demo workspace (skip it if you don't want a public
    demo — every new signup seeds its own private sample data anyway).
+   **`0006` is required** — it converts the 29 enum-typed columns to `text`
+   (with identical value domains as CHECK constraints) so the deployed Prisma
+   client can write to them. Sign-up/sign-in return 500 until it is applied.
 
-   All five files are **idempotent** — safe to re-run.
+   All six files are **idempotent** — safe to re-run.
 
 3. **Copy the two connection strings**: Dashboard → **Project Settings** →
    **Database** → *Connection string*:
@@ -315,11 +319,13 @@ Other handy scripts: `bun run db:generate` (regenerate the Prisma client),
 | **Prisma engine error on Vercel** (`Query engine library not found` / `ssl` load failures) | The Vercel runtime needs the `rhel-openssl-3.0.x` engine binary — already handled by `prisma/schema.postgres.prisma` (`binaryTargets`). Make sure the build used `bash scripts/vercel-build.sh` and the Postgres schema (check the build log line "► Postgres DATABASE_URL detected"). |
 | **`prepared statement … does not exist`** | `DATABASE_URL` (pooler, port 6543) is missing `?pgbouncer=true`. The app now appends it automatically at runtime (`src/lib/db.ts`), but keep it in the env var: `…postgres?pgbouncer=true&connection_limit=1`. |
 | **Connection timeouts / "too many connections"** | `DATABASE_URL` must be the **pooler on port 6543** with `?pgbouncer=true&connection_limit=1`. Port 5432 direct connections from serverless functions will exhaust Supabase's connection limit — `5432` is for `DIRECT_URL` tooling only. |
-| **RLS errors / empty lists** (`new row violates row-level security policy`, or every query returns 0 rows) | Migrations out of order — apply `0001 → 0002 → 0003 → 0004` in order (0003 must pass silently). If you deliberately connect as `nova_app` (strict mode), every transaction must `SET LOCAL app.org_id` — the current app does not do this yet, so use the `postgres` credentials as documented in §1. |
+| **RLS errors / empty lists** (`new row violates row-level security policy`, or every query returns 0 rows) | Migrations out of order — apply `0001 → 0002 → 0003 → 0004 → 0006` in order (0003 must pass silently). If you deliberately connect as `nova_app` (strict mode), every transaction must `SET LOCAL app.org_id` — the current app does not do this yet, so use the `postgres` credentials as documented in §1. |
 | **Resend 403 / emails not arriving** | Sending domain not verified in Resend (add SPF/DKIM records), or `MAIL_FROM` isn't on the verified domain. `onboarding@resend.dev` only delivers to the Resend account owner. |
 | **Demo sign-in 404 / "no workspace"** | `0005_demo_seed.sql` wasn't applied — run it in the Supabase SQL Editor (after 0001–0004), then sign in again. |
+| **Sign-up/sign-in 500 — "columns are still native enum types"** | `0006_prisma_compat.sql` wasn't applied — run it (after 0001 → 0005), then retry. |
+| **Sign-up/sign-in 500 — "Database tables are missing"** | Migrations not (all) applied, or `DATABASE_URL` points at a different Supabase project than the one you migrated. Apply `0001` → `0006` in order to the project `DATABASE_URL` points at — see `/api/health` to confirm the host. |
 | **Invite links point at localhost** | `APP_URL` is unset or stale in Vercel — set it to the production URL and redeploy. (Links built during serverless invocations fall back to the request's own origin, so this only happens for links generated where no origin header exists.) |
-| **`prisma db push` accidentally run against prod** | Don't — the SQL files in `migrations/` are the source of truth for production; `db push` would try to rewrite the native enums and bypass the migration history. |
+| **`prisma db push` accidentally run against prod** | Don't — the SQL files in `migrations/` are the source of truth for production; `db push` would try to alter types/constraints and bypass the migration history. |
 
 ---
 

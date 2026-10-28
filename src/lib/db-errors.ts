@@ -14,6 +14,7 @@ export interface DbIssue {
     | 'pgbouncer_prepared_statements'
     | 'table_missing'
     | 'column_missing'
+    | 'enum_text_mismatch'
     | 'unreachable'
     | 'auth_failed'
     | 'rls_violation'
@@ -69,7 +70,21 @@ export function classifyDbError(e: unknown): DbIssue | null {
     return {
       code: 'table_missing',
       headline: 'Database tables are missing.',
-      hint: 'Apply the SQL migrations in order (0001 → 0005) to the Supabase project DATABASE_URL points at — see migrations/README.md.',
+      hint: 'Apply the SQL migrations in order (0001 → 0006) to the Supabase project DATABASE_URL points at — see migrations/README.md.',
+    }
+  }
+
+  // Deployed before 0006 was applied: the Prisma client sends text-typed
+  // parameters but the columns are still native enums (SQLSTATE 42804).
+  if (
+    m.includes('but expression is of type text') ||
+    m.includes('datatype mismatch') ||
+    (m.includes('is of type') && m.includes('but expression is of type'))
+  ) {
+    return {
+      code: 'enum_text_mismatch',
+      headline: 'The database columns are still native enum types.',
+      hint: 'Apply migrations/0006_prisma_compat.sql (run AFTER 0001 → 0005) — it converts the enum columns to text so the app can write to them. Then retry.',
     }
   }
 

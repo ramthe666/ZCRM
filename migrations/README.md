@@ -11,7 +11,8 @@ project for production.**
 | `0002_rls.sql`         | The centerpiece: RLS **ENABLED + FORCED** on all 18 tables, 146 role-scoped policies (tenant / own / admin / self / app / owner), 5 SECURITY DEFINER helper functions, the `nova_app` strict-mode role, grants & revokes. Idempotent (`DROP POLICY IF EXISTS` before every create). |
 | `0003_verification.sql`| Nine checks (CHECK 1–8 + 5b) as DO blocks (RAISE EXCEPTION on failure, RAISE NOTICE on success): RLS flags, enums, helpers, triggers, the **exact policy inventory** (146 policies; 152 once `0004` is applied — verified in either state), no anon policies, reserved write paths, privilege lock-outs. Plus commented attack simulations and the strict-mode walkthrough. |
 | `0004_invitations.sql`  | The `invitations` table (email invitations with a 64-hex capability token) + its 6 RLS policies (authenticated read via `is_org_member` or own email via a new `current_user_emails()` helper; nova_app token-credential SELECT + strictly org-pinned writes; owner escape hatch) + grants and its own verification DO block. Run after `0002` (+ `0003`). |
-| `0005_demo_seed.sql`    | **Optional** shared demo workspace: 4 demo users + the `nimbusworks` org (professional plan) + the full rich sample dataset (8 accounts, 12 contacts, 10 leads, 12 deals, 12 tasks, 10 activities, 5 products, 3 templates, 3 workflows, 2 campaigns, 4 invoices — all timestamps relative to `now()`), idempotent `ON CONFLICT DO NOTHING` inserts in one transaction + verification DO block. Run last, after `0001`→`0004`; skip it if you don't want a public demo (sign in: demo@novacrm.io / Demo1234!). |
+| `0005_demo_seed.sql`    | **Optional** shared demo workspace: 4 demo users + the `nimbusworks` org (professional plan) + the full rich sample dataset (8 accounts, 12 contacts, 10 leads, 12 deals, 12 tasks, 10 activities, 5 products, 3 templates, 3 workflows, 2 campaigns, 4 invoices — all timestamps relative to `now()`), idempotent `ON CONFLICT DO NOTHING` inserts in one transaction + verification DO block. Run after `0001`→`0004`; skip it if you don't want a public demo (sign in: demo@novacrm.io / Demo1234!). |
+| `0006_prisma_compat.sql` | **Required.** Aligns the schema with the deployed Prisma client: converts the 29 enum-typed columns (created by `0001`) to `text` — values preserved — and re-attaches each column's exact value domain as a CHECK constraint. The Prisma client sends `String` parameters as `text`, and PostgreSQL has no implicit text→enum cast, so **every write fails with SQLSTATE 42804 until this file is applied**. Keeps the 23 enum types (so `0003` stays re-runnable), and never touches policies/triggers/indexes/grants. Idempotent; run last, after `0001`→`0005`. |
 
 ---
 
@@ -24,6 +25,9 @@ project for production.**
 3. Repeat with `0002_rls.sql`, then `0003_verification.sql` — **in this order**.
 4. `0003` prints nine `CHECK n OK …` notices. Any red exception means the
    check that failed (message tells you exactly what and why).
+5. Continue with `0004_invitations.sql`, `0005_demo_seed.sql` (optional), and
+   finally `0006_prisma_compat.sql` (**required** — sign-up stays broken
+   without it).
 
 **Option B — Supabase CLI**
 
@@ -68,9 +72,11 @@ ALTER ROLE nova_app WITH PASSWORD '<strong-generated-password>';
 
 ```bash
 # ── Database (Supabase) ────────────────────────────────────────────────────
-# Runtime connection: Supabase pooler (Supavisor, transaction mode), port 6543.
-# pgbouncer=true + connection_limit=1 are REQUIRED with transaction pooling.
-DATABASE_URL="postgresql://nova_app:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+# Runtime connection: Supabase pooler (Supavisor, transaction mode), port 6543,
+# as the postgres (table owner) role — the *_owner_admin policies in 0002 grant
+# the app full access. pgbouncer=true + connection_limit=1 are REQUIRED with
+# transaction pooling (the app appends them at runtime if missing).
+DATABASE_URL="postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
 
 # Migrations / prisma db pull / one-off scripts: direct connection, port 5432.
 DIRECT_URL="postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres"
@@ -90,9 +96,13 @@ WHATSAPP_VERIFY_TOKEN=""
 * While developing in the sandbox the app keeps using SQLite
   (`DATABASE_URL="file:./db/custom.db"`). These Supabase values are for the
   production deployment.
-* Use the **nova_app** credentials for `DATABASE_URL` in production so RLS
-  strict mode applies to every Prisma query. The `postgres` user is for
-  `DIRECT_URL` only (dashboard/admin).
+* Use the **postgres** (table owner) pooler credentials for `DATABASE_URL` in
+  production: the app's API layer does its own session auth + org scoping, and
+  the `*_owner_admin` policies grant the owner role full access. The stricter
+  `nova_app` role (queries fail closed unless each transaction pins
+  `app.org_id`) is installed for a future hardening pass — switching to it
+  requires adding the `SET LOCAL app.org_id` transaction wrapper first
+  (see §3, Path B).
 
 ---
 
@@ -221,24 +231,20 @@ The schema is ready for it — no migration needed:
 
 ## 6. Keeping Prisma in sync (important)
 
-* The sandbox schema (`prisma/schema.prisma`) uses SQLite with string enums.
-  When you move the app to Supabase, change the datasource:
-
-  ```prisma
-  datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")        // pooler
-    directUrl = env("DIRECT_URL")         // migrations/introspection
-  }
-  ```
-
+* The sandbox schema (`prisma/schema.prisma`) and the production schema
+  (`prisma/schema.postgres.prisma`) contain the same models with identical
+  `@@map`/`@map` snake_case mappings — they line up 1:1 with the tables and
+  columns the migrations create (model `User` → table `users`,
+  `passwordHash` → `password_hash`, …).
 * **These SQL files are the source of truth for the production schema.**
-  Never run `prisma db push` against production — it would try to rewrite
-  native enums back to text and bypass the migration history.
-* To reconcile the Prisma models with production, run
-  `prisma db pull --url "$DIRECT_URL"` in a scratch copy and let Prisma
-  generate native `enum` blocks for the 23 Postgres types, then regenerate
-  the client.
+  Never run `prisma db push` against production — it would try to alter types
+  and constraints and bypass the migration history.
+* After `0006`, status-like columns are `text` with CHECK constraints, so the
+  Prisma `String` fields bind directly. To change an allowed value list, drop
+  and re-add the column's `<table>_<column>_values_check` constraint in a new
+  numbered migration, and update both Prisma schemas' field comments.
+
+---
 
 ## 7. Troubleshooting
 
@@ -246,9 +252,11 @@ The schema is ready for it — no migration needed:
 | ------- | ------------- |
 | `new row violates row-level security policy for table "…"` | Working as intended — the write is outside your allowed org. In the app: check `SET LOCAL app.org_id` is set inside the *same transaction* as the query. |
 | App queries return 0 rows via Prisma | `app.org_id` not pinned in this transaction (fail-closed), or the membership is not `active`. |
+| Sign-up/sign-in 500 — `column "…" is of type … but expression is of type text` | `0006_prisma_compat.sql` not applied yet — run it (after `0001`→`0005`), then retry. |
+| Sign-up/sign-in 500 — "Database tables are missing" | Migrations not (all) applied, or `DATABASE_URL` points at a different Supabase project than the one you migrated. Check `/api/health` for the host it actually uses. |
 | SQL Editor sees all rows | Expected: SQL Editor runs as the owner (`*_owner_admin` policies). Test tenant isolation with `SET LOCAL ROLE authenticated` + `request.jwt.claims` (see the attack simulations at the bottom of `0003`). |
 | `permission denied for table sessions` as `authenticated` | Intended — sessions are server-side only. |
-| Need a new enum value | `ALTER TYPE public.lead_status ADD VALUE 'recycled';` (enums are otherwise immutable), then update `schema.prisma`. |
+| Need a new value in a status list | Since `0006` the value domains are CHECK constraints — `ALTER TABLE public.leads DROP CONSTRAINT leads_status_values_check;` then re-add it with the extended `IN (…)` list (in a new numbered migration), and update both Prisma schemas' field comments. |
 | Re-running a file fails on `GRANT nova_app TO postgres` | The role already exists and is granted — comment that line out. |
 
 ---
