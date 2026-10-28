@@ -5,6 +5,11 @@ import { seedOrgData } from '@/lib/seed'
 import { audit, notify } from '@/lib/events'
 import { appBaseUrl, sendMail, welcomeEmail } from '@/lib/mailer'
 
+// Signup provisions a whole workspace (user + org + membership + sample data +
+// session) — on a cold Supabase pooler connection this can take longer than
+// the 10s serverless default, so allow extra headroom.
+export const maxDuration = 30
+
 const schema = z.object({
   name: z.string().min(2, 'Name is too short').max(80),
   email: z.string().email('Enter a valid email').max(160),

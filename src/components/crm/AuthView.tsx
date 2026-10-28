@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 
-import { api, setActiveOrgId, roleLabel, type SessionPayload } from '@/lib/crm'
+import { api, ApiError, setActiveOrgId, roleLabel, type SessionPayload } from '@/lib/crm'
 import { LogoMark, DashboardMockup } from '@/components/crm/landing/illustrations'
 
 export interface AuthInvite {
@@ -40,6 +40,7 @@ export function AuthView({
   const [password, setPassword] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [errorHint, setErrorHint] = React.useState<string | null>(null)
 
   // Deep-link invitations pin the invitee's email — prefill it once.
   React.useEffect(() => {
@@ -49,6 +50,7 @@ export function AuthView({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setErrorHint(null)
     setBusy(true)
     try {
       const payload =
@@ -60,6 +62,7 @@ export function AuthView({
       onSuccess(payload)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
+      setErrorHint(err instanceof ApiError ? (err.hint ?? null) : null)
     } finally {
       setBusy(false)
     }
@@ -75,6 +78,7 @@ export function AuthView({
   const setMode = (m: 'signin' | 'signup') => {
     onModeChange(m)
     setError(null)
+    setErrorHint(null)
     if (invite?.email) setEmail(invite.email)
   }
 
@@ -222,9 +226,10 @@ export function AuthView({
             </div>
 
             {error ? (
-              <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-                {error}
-              </p>
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                <p>{error}</p>
+                {errorHint ? <p className="mt-1 text-xs leading-relaxed text-rose-600/90 dark:text-rose-300/80">{errorHint}</p> : null}
+              </div>
             ) : null}
 
             <Button type="submit" disabled={busy} className="w-full bg-emerald-600 py-2.5 text-white hover:bg-emerald-700">

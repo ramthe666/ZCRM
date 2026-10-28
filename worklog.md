@@ -238,3 +238,29 @@ Work Log:
 Stage Summary:
 - User action: re-run 0003_verification.sql (fixed), then 0004_invitations.sql, then 0005_demo_seed.sql — in that order, in the Supabase SQL Editor.
 - 0001/0002 unchanged. On Vercel: APP_URL=https://zcrm11.vercel.app; keep one project, delete the other.
+
+---
+Task ID: 10
+Agent: main (Z.ai Code)
+Task: Fix production 500 on signup/signin (Vercel + Supabase) — root-cause and bulletproof the Prisma client generation + pooler URL; add /api/health diagnostics; push
+
+Work Log:
+- Diagnosis from the user's screenshots: /signup renders fine (static) but POST /api/auth/signup → 500 "Something went wrong. Please try again." on zcrm11.vercel.app, with only APP_URL/DATABASE_URL/DIRECT_URL set on Vercel (Production). All migrations 0001→0005 applied successfully, so the SQL layer is NOT the problem.
+- ROOT CAUSE (most probable): dependency install runs @prisma/client's own postinstall, which generates the Prisma client from the DEFAULT prisma/schema.prisma — the SQLITE schema (package.json had no project-level postinstall). Unless the Vercel project's Build Command was manually set to `bash scripts/vercel-build.sh` (easy to miss), the deployed app got a SQLite-generated client; with a postgres:// DATABASE_URL every single query then fails at URL validation ("the URL must start with the protocol file://") → opaque 500 on every DB-backed API call. Secondary suspect (also fixed): pasted pooler URL missing ?pgbouncer=true → "prepared statement does not exist".
+- Fixes (no changes to migrations 0001→0005, no changes to 0001/0002 — untouched as promised):
+  1. vercel.json (NEW): framework nextjs + buildCommand `bash scripts/vercel-build.sh` pinned IN THE REPO — Vercel picks it up on every import/deploy, no dashboard setting needed.
+  2. scripts/postinstall.js (NEW) + package.json "postinstall": runs right after install, picks the schema from DATABASE_URL (postgres:// → schema.postgres.prisma, else SQLite schema.prisma) and regenerates the client. Belt-and-suspenders: correct client even if the build command is overridden/bypassed. Defensive: never fails the install.
+  3. scripts/vercel-build.sh: hardened (bunx→npx fallback, clearer log lines).
+  4. src/lib/db.ts: runtime DATABASE_URL normalization — Supabase transaction pooler (port 6543) gets pgbouncer=true + connection_limit=1 auto-appended, Supabase hosts get sslmode=require; URL passed via PrismaClient datasources override. describeDatabaseUrl() exports a masked URL summary for diagnostics.
+  5. src/lib/db-errors.ts (NEW): classifyDbError() maps known Prisma/Postgres failures to actionable { headline, hint, code } — SQLite-client-vs-Postgres-URL, pgbouncer prepared statements, missing tables (migrations), missing columns (drift), unreachable host, auth failed, RLS violation, closed connections.
+  6. src/lib/auth.ts errorResponse(): DB failures now return { error: headline, hint, dbIssueCode } with the fix spelled out — no more opaque 500s. Non-DB errors keep the generic message; full stack stays in server logs.
+  7. Client: ApiError (src/lib/crm.ts) carries hint; AuthView renders error + hint (muted second line) in the alert box.
+  8. /api/health (NEW route): secret-free self-check — SELECT 1 liveness, server version (Postgres version()/SQLite sqlite_version(), dialect-aware, quiet), masked URL summary (protocol/host/port/pooler/params), env presence booleans, classified issue + warnings (non-pooler URL, missing pgbouncer, missing RESEND_API_KEY in prod, missing DATABASE_URL) + hint.
+  9. signup route: export const maxDuration = 30 (workspace provisioning + seeding can exceed the 10s serverless default on a cold pooler connection).
+  10. Docs: DEPLOYMENT.md §2 (build now automatic via vercel.json; postinstall safety net), first-deploy checklist now starts at /api/health, troubleshooting table gains the "every signup/signin 500" + "prepared statement" rows; .env.example documents /api/health verification; .gitignore += /tool-results/.
+- Verification: node scripts/postinstall.js both paths (SQLite + simulated postgres://) → correct schema each time, client regenerated back to SQLite for the sandbox; bash -n vercel-build.sh OK; bun run lint clean; /api/health → ok:true, SQLite 3.46.0, zero prisma:error log noise after dialect-aware fix; POST /api/auth/signup → 201 with full payload; demo signin → 200; agent-browser E2E: /signup renders, form fill + submit → workspace loads at / with success toast, all 16 sidebar modules present, zero console/page errors; dev.log clean.
+- Pushed: this commit → github.com/ramthe666/ZCRM main.
+
+Stage Summary:
+- User action: nothing manual — the push triggers a Vercel redeploy automatically. After it finishes (≈2–3 min), open https://zcrm11.vercel.app/api/health: expect {"ok":true,...,"connected":true}. Then sign up / sign in with demo@novacrm.io — both should work. If /api/health still reports an issue, it now says exactly what and how to fix it.
+- If the Vercel project was imported BEFORE vercel.json existed and still shows a custom/default Build Command, either set it once to `bash scripts/vercel-build.sh` or delete + re-import the project — vercel.json then governs every deploy.

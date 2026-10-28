@@ -60,10 +60,13 @@ export type Row = Record<string, unknown>
 /** Error thrown by the api() client — carries the HTTP status for flow control. */
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  /** Operator-facing fix suggestion for server/database issues (optional). */
+  hint?: string
+  constructor(message: string, status: number, hint?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.hint = hint
   }
 }
 
@@ -95,7 +98,7 @@ export async function api<T = Row>(
     credentials: 'same-origin',
   })
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
-  if (!res.ok) throw new ApiError((data.error as string) ?? `Request failed (${res.status})`, res.status)
+  if (!res.ok) throw new ApiError((data.error as string) ?? `Request failed (${res.status})`, res.status, data.hint as string | undefined)
   return data as T
 }
 

@@ -115,14 +115,22 @@ not by Prisma migrations.** Never run `prisma db push` against production.
 3. Configure the build:
 
    - **Framework preset:** Next.js (auto)
-   - **Build Command:** `bash scripts/vercel-build.sh` ← **change this**
+   - **Build Command:** `bash scripts/vercel-build.sh` ← **already pinned in the
+     repo's `vercel.json`**, so Vercel picks it up automatically on every
+     import/deploy. (If your project was imported *before* `vercel.json`
+     existed, set it once manually — or delete and re-import — then check the
+     build log for the line `► Postgres DATABASE_URL detected`.)
    - **Install Command:** leave default (`bun install`)
    - **Output Directory:** leave default
 
    `scripts/vercel-build.sh` picks `prisma/schema.postgres.prisma` when
    `DATABASE_URL` is a Postgres URL (and falls back to the SQLite schema
    otherwise, so local builds keep working), generates the Prisma client,
-   then runs `next build`.
+   then runs `next build`. A second safety net,
+   `scripts/postinstall.js`, regenerates the client with the correct schema
+   right after `bun install` — this is what fixes the "every signup/signin
+   returns 500" failure mode where the default SQLite client got generated
+   at install time.
 
 4. **Add Environment Variables** (expand *Environment Variables* before
    deploying) — for every Environment (Production + Preview), from
@@ -149,6 +157,10 @@ not by Prisma migrations.** Never run `prisma db push` against production.
 5. **Deploy** and wait for the build (≈2–3 min). Then run the
    **first-deploy checklist**:
 
+   - [ ] Open `https://<your-domain>/api/health` — it must say
+         `"ok": true` with `"connected": true`. If not, it explains exactly
+         what is wrong and how to fix it (database unreachable, wrong
+         credentials, missing migrations, Prisma client/schema mismatch…).
    - [ ] Open the deployment URL — the Nova CRM landing page renders.
    - [ ] `/signup` and `/signin` open the auth screens directly and **survive a
          hard refresh** (the address bar keeps the URL; no bounce to `/`).
@@ -291,10 +303,17 @@ Other handy scripts: `bun run db:generate` (regenerate the Prisma client),
 
 ## 8. Troubleshooting
 
+> **Start at `https://<your-domain>/api/health`** — it classifies the failure
+> (wrong credentials, unreachable host, missing tables, Prisma
+> client/provider mismatch, pooler misconfiguration) and prints the fix.
+> API errors surfaced in the UI now carry the same actionable hint.
+
 | Symptom | Cause / fix |
 | ------- | ----------- |
+| **Every signup/signin returns 500** ("Something went wrong…") with static pages fine | The deployed Prisma client was generated from the **SQLite** schema at install time instead of the Postgres one. Fixed in-repo: `vercel.json` pins the build command and `scripts/postinstall.js` regenerates the client with the right schema after install. Pull the latest commit and **redeploy** — verify the build log shows `► Postgres DATABASE_URL detected` and `/api/health` says `"ok": true`. |
 | **401 "Not signed in" right after signing in** | Cookie/URL mismatch: the session cookie is `httpOnly` + `Secure` + `SameSite=None` on HTTPS. Make sure you're on the exact `APP_URL` origin (no `www` vs bare-domain mix), and that `APP_URL` matches the URL you're browsing (https, no trailing slash). Local `http://localhost:3000` works with `SameSite=Lax` automatically. |
 | **Prisma engine error on Vercel** (`Query engine library not found` / `ssl` load failures) | The Vercel runtime needs the `rhel-openssl-3.0.x` engine binary — already handled by `prisma/schema.postgres.prisma` (`binaryTargets`). Make sure the build used `bash scripts/vercel-build.sh` and the Postgres schema (check the build log line "► Postgres DATABASE_URL detected"). |
+| **`prepared statement … does not exist`** | `DATABASE_URL` (pooler, port 6543) is missing `?pgbouncer=true`. The app now appends it automatically at runtime (`src/lib/db.ts`), but keep it in the env var: `…postgres?pgbouncer=true&connection_limit=1`. |
 | **Connection timeouts / "too many connections"** | `DATABASE_URL` must be the **pooler on port 6543** with `?pgbouncer=true&connection_limit=1`. Port 5432 direct connections from serverless functions will exhaust Supabase's connection limit — `5432` is for `DIRECT_URL` tooling only. |
 | **RLS errors / empty lists** (`new row violates row-level security policy`, or every query returns 0 rows) | Migrations out of order — apply `0001 → 0002 → 0003 → 0004` in order (0003 must pass silently). If you deliberately connect as `nova_app` (strict mode), every transaction must `SET LOCAL app.org_id` — the current app does not do this yet, so use the `postgres` credentials as documented in §1. |
 | **Resend 403 / emails not arriving** | Sending domain not verified in Resend (add SPF/DKIM records), or `MAIL_FROM` isn't on the verified domain. `onboarding@resend.dev` only delivers to the Resend account owner. |

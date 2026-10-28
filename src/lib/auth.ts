@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto'
 import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
+import { classifyDbError } from '@/lib/db-errors'
 
 export const SESSION_COOKIE = 'nova_session'
 const SESSION_DAYS = 30
@@ -135,6 +136,21 @@ export function json(data: unknown, status = 200) {
 export function errorResponse(e: unknown) {
   if (e instanceof ApiError) return json({ error: e.message }, e.status)
   console.error('[api]', e)
+  // Database failures get a actionable, readable diagnosis instead of a bare
+  // "Something went wrong" — the raw message stays in the server logs, the
+  // response carries the classified cause + fix so operators (and the user)
+  // can act on it immediately. No secrets are included.
+  const issue = classifyDbError(e)
+  if (issue) {
+    return json(
+      {
+        error: issue.headline,
+        hint: issue.hint,
+        dbIssueCode: issue.code,
+      },
+      500
+    )
+  }
   return json({ error: 'Something went wrong. Please try again.' }, 500)
 }
 
