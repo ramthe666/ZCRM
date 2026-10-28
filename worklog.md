@@ -212,3 +212,29 @@ Work Log:
 Stage Summary:
 - ALL user-reported issues resolved and browser-verified. Production deployment path ready: Supabase migrations 0001→0005 → Vercel import with build command `bash scripts/vercel-build.sh` + env vars from .env.example → Resend domain + key for real invite/welcome emails.
 - Demo account fully working in sandbox and (after 0005) in production, with self-service reset.
+
+---
+Task ID: 9
+Agent: main (Z.ai Code)
+Task: Fix migration 0003 CHECK 3 failure + real /signup /signin URLs + URL audit + GitHub push
+
+Work Log:
+- Reproduced the user's exact error on a REAL PostgreSQL 18 (embedded-postgres npm, Supabase roles + auth.uid() emulated via a shim): 0003 CHECK 3 failed with "missing helper functions: current_user_row_ids, current_user_org_ids".
+- Root causes fixed (0001/0002 content untouched):
+  * 0003 CHECK 3: to_regprocedure('public.current_user_row_ids') without '()' returns NULL for zero-arg functions → sigs now '()'.
+  * 0003 CHECK 5: RAISE format '...":%expected: %%found: %' had %% collapsing placeholders (5 args → 3) → "too many parameters"; format fixed. CHECK 5 is now invitations-aware: verifies the 6 invitation policies too when 0004 is applied (146 or 152 total) so 0003 can be re-run at any stage.
+  * 0004 preflight: same missing-'()' bug on current_user_row_ids.
+  * 0004 verification: pg_policy.polroles is oid[] — @> regrole[] has no operator → cast; ARRAY['public']::regrole fails (PUBLIC = pseudo-role oid 0) → switched to the pg_policies pattern from 0003 CHECK 6.
+- Verified on real PG18: full chain 0001→0005 passes (all CHECK 1-8 + 5b + 0004 + 0005 notices green), double-run idempotent (2 full passes incl. 0003-after-0004), RLS behavior tests: owner via auth_user_id JWT sees 12 deals/1 org/sessions denied; attacker uuid sees 0 rows, cross-tenant insert → 42501; anon denied everything; nova_app unpinned → 0 rows, pinned → 12 rows, wrong-org insert → 42501.
+- URLs: next.config.ts rewrites /signup, /signin, /login → / (beforeFiles); page.tsx client routing (routeFromPath + pushUrl/replaceUrl + popstate back/forward + boot URL normalization: signed-in users on auth paths → replaceUrl('/')); Landing/AuthView/mode-toggle/sign-in/sign-out/start-trial all sync the address bar. Browser-verified: /signup + /signin direct load & hard refresh stay put; landing → Sign in → /signin; toggle → /signup; browser back → landing; demo sign-in → URL '/'; sign-out → '/' landing; invite deep link → cleans to /signin with banner; invite signup → /signup prefilled → own workspace + NimbusWorks membership, org switcher shows both, member role hides Campaigns/Workflows/Integrations/Billing.
+- appBaseUrl() in mailer.ts: APP_URL → request origin (x-forwarded-host/proto) → localhost; inviteUrl(token, req) + welcomeEmail appUrl threaded through members/invitations/signup routes. Sandbox invite links now built from the request origin.
+- Branding fix: layout.tsx was still "Z.ai Code Scaffold" with an EXTERNAL favicon URL → Nova CRM metadata (title/description/OG/twitter, metadataBase from APP_URL, themeColor #10b981) + self-made src/app/icon.svg (emerald tile + white spark).
+- Demo workspace restored to pristine: removed stray test deal ("TestFlow Inc"), stray 5th invoice, ran /api/demo/reset (previous sessions had drifted counts: 9 accounts/19 activities/10 notifications), plan → professional, ownership re-spread across the 4 members. Final counts match 0005 exactly (8/12/10/12/12/10/5/3/3/2/4/3).
+- File modes: restored 644 on all files that had drifted to 755 (content identical, only chmod bits); scripts/vercel-build.sh stays executable.
+- DEPLOYMENT.md: APP_URL fallback note, /signup+/signin checklist item, "One URL only" Vercel section (delete the duplicate project; deployment aliases are normal). .env.example: APP_URL=https://zcrm11.vercel.app + resolution order.
+- lint clean, tsc clean (src/), dev.log clean, zero browser console/page errors in both test sessions. All E2E test data cleaned (urltest user/org/membership/invitation).
+- Pushed: commit 4cd99a5 → github.com/ramthe666/ZCRM main.
+
+Stage Summary:
+- User action: re-run 0003_verification.sql (fixed), then 0004_invitations.sql, then 0005_demo_seed.sql — in that order, in the Supabase SQL Editor.
+- 0001/0002 unchanged. On Vercel: APP_URL=https://zcrm11.vercel.app; keep one project, delete the other.
