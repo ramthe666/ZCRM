@@ -644,7 +644,7 @@ END $$;
 -- 16. Verification (0003-style DO blocks — RAISE EXCEPTION on failure)
 -- =============================================================================
 
--- CHECK A — all 29 converted columns are now plain `text`
+-- CHECK A — all 29 converted columns exist and are now plain `text`
 DO $$
 DECLARE
   v_cols text[] := ARRAY[
@@ -667,17 +667,20 @@ DECLARE
   v_bad   text;
   v_count int;
 BEGIN
-  SELECT string_agg(t.t || ' (' || c.data_type || ')', ', ' ORDER BY t.t), count(*)
+  -- Count the BAD columns: anything that is not `text` — or missing entirely.
+  -- LEFT JOIN + IS DISTINCT FROM (not `<>`) so a NULL data_type from a missing
+  -- column is caught too (`NULL <> 'text'` would be NULL and silently skip it).
+  SELECT string_agg(t.t || ' (' || coalesce(c.data_type, 'MISSING') || ')', ', ' ORDER BY t.t), count(*)
   INTO v_bad, v_count
   FROM unnest(v_cols) AS t(t)
-  JOIN information_schema.columns c
+  LEFT JOIN information_schema.columns c
     ON c.table_schema = 'public'
    AND c.table_name  = split_part(t.t, '.', 1)
    AND c.column_name = split_part(t.t, '.', 2)
-  WHERE c.data_type <> 'text';
+  WHERE c.data_type IS DISTINCT FROM 'text';
 
-  IF v_count <> 29 OR v_bad IS NOT NULL THEN
-    RAISE EXCEPTION '0006 CHECK A FAILED — expected 29 text columns, % still not text: %', v_count, coalesce(v_bad, '<missing>');
+  IF v_count <> 0 OR v_bad IS NOT NULL THEN
+    RAISE EXCEPTION '0006 CHECK A FAILED — % of 29 columns are missing or not text: %', v_count, coalesce(v_bad, '<unexpected>');
   END IF;
   RAISE NOTICE '0006 CHECK A OK — all 29 columns are now text.';
 END $$;

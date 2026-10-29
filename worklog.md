@@ -289,3 +289,31 @@ Work Log:
 
 Stage Summary:
 - User action: re-run the NEW 0006_prisma_compat.sql from the top in the Supabase SQL Editor (paste the whole file, Run). Whatever the failed attempt already committed is skipped automatically. Expect "Success" + CHECK A–E OK notices. Sign-up then works (the enum→text conversion is the fix for the 42804 write failures).
+
+---
+Task ID: 12
+Agent: main (Z.ai Code)
+Task: Fix migration 0006 failing with `P0001: 0006 CHECK A FAILED — expected 29 text columns, 0 still not text: <missing>` (deterministic failure on every run)
+
+Work Log:
+- User reported: re-running 0006 (after the 0A000 policy fix) now fails at CHECK A with "0 still not text: <missing>". Migrations 0001→0005 untouched, as required.
+- Diagnosis — this was a bug in MY verification section of 0006, not in the user's database. Read the error literally: "0 still not text" = ZERO columns failed the type check, i.e. all 29 conversions SUCCEEDED. The old CHECK A was mathematically unsatisfiable:
+  * The query counted BAD columns (`WHERE c.data_type <> 'text'`) into v_count, and aggregated their names into v_bad.
+  * The success condition then demanded `v_count = 29 AND v_bad IS NULL` — 29 bad columns with an empty bad-list. Impossible in ANY database state:
+      - all 29 text (correct state): v_count = 0 → fail  ← what the user hit
+      - all 29 enum: v_count = 29 but v_bad non-NULL → fail
+      - any mix → fail
+  * So the check failed every single run, deterministically, after the conversions had already succeeded — which is exactly "why this is repeating".
+- Fix (CHECK A rewritten; nothing else in the file changed):
+  * LEFT JOIN information_schema.columns instead of inner JOIN, so a MISSING column is caught, not silently skipped.
+  * `WHERE c.data_type IS DISTINCT FROM 'text'` instead of `<> 'text'` — `NULL <> 'text'` evaluates to NULL (row skipped); IS DISTINCT FROM catches the NULL from a missing column.
+  * Success condition inverted to the correct semantics: `v_count = 0 AND v_bad IS NULL` (zero bad/missing columns), failure message now reports "% of 29 columns are missing or not text: <list>".
+  * Verified the rewritten logic in all three reachable DB states: all-text → 0 bad → PASS; all-enum → 29 bad → FAIL with list; missing column → counted as (MISSING) → FAIL.
+- Audited CHECK B, C, D, E for the same class of inversion — all are logically correct (B: counts missing constraints, requires 0; C: aggregates tables without RLS+FORCE, requires empty; D: aggregates tables missing the trigger, requires empty; E: requires policy exists). Grep confirms only two v_count comparisons remain in the file and both are `<> 0`.
+- Also verified the user's current DB state is irrelevant to the fix: Supabase SQL Editor runs the script as one implicit transaction (simple query protocol), so the failed CHECK A likely rolled the run back — but even if per-statement commits happened, every conversion is guarded on `data_type = 'USER-DEFINED'` and every constraint on NOT EXISTS, so re-running the fixed file from the top works in every state.
+- Docs: README troubleshooting gains the "CHECK A FAILED — 0 still not text" row (explains it means conversions succeeded; re-run current file).
+- Verification: DO-block balance 21 open / 21 close, 42 dollar-quotes (even), 802 lines; bun run lint clean; dev.log clean.
+- Pushed: this commit → github.com/ramthe666/ZCRM main.
+
+Stage Summary:
+- User action: re-run the NEW 0006_prisma_compat.sql from the top in the Supabase SQL Editor. Guards skip anything already converted; expect "Success" + `CHECK A OK … CHECK E OK` notices. Sign-up works immediately after (the enum→text conversion is the fix for the 42804 write failure).
